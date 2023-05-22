@@ -35,9 +35,9 @@ import com.badlogic.gdx.math.*;
  * axis-aligned rectangle in the coordinate space of the current scissor mask.
  */
 public class CUScissor {
-    /* The primary scissor transform (for OpenGL) */
+    /** The primary scissor transform (for OpenGL) */
     private Affine2 scissor;
-    /* The inverse scissor transform (for OpenGL)  */
+    /** The inverse scissor transform (for OpenGL)  */
     private Affine2 inverse;
 
     /** The coordinate space transform (for intersections) */
@@ -47,6 +47,9 @@ public class CUScissor {
     /** The anti-aliasing fringe */
     private float fringe;
 
+    /**
+     * Creates a degenerate scissor of size 0.
+     */
     public CUScissor() {
         scissor = new Affine2();
         inverse = new Affine2();
@@ -55,26 +58,76 @@ public class CUScissor {
         setZero();
     }
 
+    /**
+     * Creates a copy with the resources of the given scissor mask.
+     *
+     * The original scissor mask is no longer safe to use after calling this
+     * constructor.
+     *
+     * @param mask    The scissor mask to take from
+     */
     public CUScissor(CUScissor mask) {
         set(mask);
     }
 
+    /**
+     * Initializes a scissor with the given bounds and fringe.
+     *
+     * The fringe is the size of the scissor border in pixels.  A value less than
+     * 0 gives a sharp transition, where larger values have more gradual transitions.
+     *
+     * @param rect      The scissor mask bounds
+     * @param fringe    The size of the scissor border in pixels
+     *
+     * @return true if initialization was successful.
+     */
     public CUScissor(Rectangle rect, float fringe) {
         this();
         set(rect,fringe);
     }
 
+    /**
+     * Initializes a scissor with the given transformed bounds and fringe.
+     *
+     * The fringe is the size of the scissor border in pixels.  A value less than
+     * 0 gives a sharp transition, where larger values have more gradual transitions.
+     *
+     * @param rect      The scissor mask bounds
+     * @param aff       The scissor mask transform
+     * @param fringe    The size of the scissor border in pixels
+     *
+     * @return true if initialization was successful.
+     */
     public CUScissor(Rectangle rect, Affine2 aff, float fringe) {
         this();
         set(rect, aff, fringe);
     }
 
+    /**
+     * Initializes a scissor with the given transformed bounds and fringe.
+     *
+     * The fringe is the size of the scissor border in pixels.  A value less than
+     * 0 gives a sharp transition, where larger values have more gradual transitions.
+     *
+     * @param rect      The scissor mask bounds
+     * @param mat       The scissor mask transform
+     * @param fringe    The size of the scissor border in pixels
+     *
+     * @return true if initialization was successful.
+     */
     public CUScissor(Rectangle rect, Matrix4 mat, float fringe) {
         this();
         set(rect,mat,fringe);
     }
 
     //region Setters
+    /**
+     * Sets this to be a degenerate scissor of size 0.
+     *
+     * All pixels will be dropped by this mask.
+     *
+     * @return this scissor mask, returned for chaining
+     */
     public CUScissor setZero() {
         inverse.idt();
         transform.idt();
@@ -83,6 +136,13 @@ public class CUScissor {
         return this;
     }
 
+    /**
+     * Sets this scissor mask to be a copy of the given one.
+     *
+     * @param mask    The scissor mask to copy
+     *
+     * @return this scissor mask, returned for chaining
+     */
     public CUScissor set(CUScissor mask) {
         scissor = mask.scissor;
         inverse = mask.inverse;
@@ -92,6 +152,19 @@ public class CUScissor {
         return this;
     }
 
+    /**
+     * Sets the scissor mask to have the given bounds and fringe.
+     *
+     * Any previous transforms are dropped when this method is called.
+     *
+     * The fringe is the size of the scissor border in pixels.  A value less than
+     * 0 gives a sharp transition, where larger values have more gradual transitions.
+     *
+     * @param rect         The scissor mask bounds
+     * @param fringe    The size of the scissor border in pixels
+     *
+     * @return this scissor mask, returned for chaining
+     */
     public CUScissor set(Rectangle rect, float fringe) {
         transform.idt();
         bounds = rect;
@@ -100,6 +173,20 @@ public class CUScissor {
         return this;
     }
 
+    /**
+     * Sets the scissor mask to have the given transformed bounds and fringe.
+     *
+     * Any previous transforms are dropped when this method is called.
+     *
+     * The fringe is the size of the scissor border in pixels.  A value less than
+     * 0 gives a sharp transition, where larger values have more gradual transitions.
+     *
+     * @param rect      The scissor mask bounds
+     * @param aff       The scissor mask transform
+     * @param fringe    The size of the scissor border in pixels
+     *
+     * @return this scissor mask, returned for chaining
+     */
     public CUScissor set(Rectangle rect, Affine2 aff, float fringe) {
         transform = aff;
         bounds = rect;
@@ -108,6 +195,20 @@ public class CUScissor {
         return this;
     }
 
+    /**
+     * Sets the scissor mask to have the given transformed bounds and fringe.
+     *
+     * Any previous transforms are dropped when this method is called.
+     *
+     * The fringe is the size of the scissor border in pixels.  A value less than
+     * 0 gives a sharp transition, where larger values have more gradual transitions.
+     *
+     * @param rect      The scissor mask bounds
+     * @param mat       The scissor mask transform
+     * @param fringe    The size of the scissor border in pixels
+     *
+     * @return this scissor mask, returned for chaining
+     */
     public CUScissor set(Rectangle rect, Matrix4 mat, float fringe) {
         transform.set(mat);
         bounds = rect;
@@ -130,6 +231,14 @@ public class CUScissor {
         return new Rectangle(bounds);
     }
 
+    /**
+     * Sets the bounding box of this scissor mask
+     *
+     * The bounding box is axis-aligned. It ignores the transform component
+     * of the scissor mask.
+     *
+     * @param bounds    The bounding box of this scissor mask
+     */
     public void setBounds(Rectangle bounds) {
         this.bounds.set(bounds);
         recompute();
@@ -438,8 +547,8 @@ public class CUScissor {
 
         array[offset+12] = bounds.width/2;
         array[offset+13] = bounds.height/2;
-        array[offset+14] = (float)Math.sqrt(inverse.m00*inverse.m00 + inverse.m01*inverse.m01) / fringe;
-        array[offset+15] = (float)Math.sqrt(inverse.m10*inverse.m10 + inverse.m11*inverse.m11) / fringe;
+        array[offset+14] = (float)Math.sqrt(scissor.m00*scissor.m00 + scissor.m01*scissor.m01) / fringe;
+        array[offset+15] = (float)Math.sqrt(scissor.m10*scissor.m10 + scissor.m11*scissor.m11) / fringe;
         return array;
     }
 
@@ -468,8 +577,8 @@ public class CUScissor {
 
         array[offset+9 ] = bounds.width/2;
         array[offset+10] = bounds.height/2;
-        array[offset+11] = (float)Math.sqrt(inverse.m00*inverse.m00 + inverse.m01*inverse.m01) / fringe;
-        array[offset+12] = (float)Math.sqrt(inverse.m10*inverse.m10 + inverse.m11*inverse.m11) / fringe;
+        array[offset+11] = (float)Math.sqrt(scissor.m00*scissor.m00 + scissor.m01*scissor.m01) / fringe;
+        array[offset+12] = (float)Math.sqrt(scissor.m10*scissor.m10 + scissor.m11*scissor.m11) / fringe;
         return array;
     }
 
@@ -484,11 +593,11 @@ public class CUScissor {
     @Override
     public String toString() {
         String result = "Scissor\n";
-        result += String.format("|  %.4f, %.4f, %.4f  |   |  %.4f | \n", inverse.m00, inverse.m01, inverse.m02, bounds.width/2);
-        result += String.format("|  %.4f, %.4f, %.4f  |;  |  %.4f |; ",  inverse.m10, inverse.m11, inverse.m12, bounds.height/2);
+        result += String.format("|  %.4f, %.4f, %.4f  |   |  %.4f | \n", scissor.m00, scissor.m01, scissor.m02, bounds.width/2);
+        result += String.format("|  %.4f, %.4f, %.4f  |;  |  %.4f |; ",  scissor.m10, scissor.m11, scissor.m12, bounds.height/2);
 
-        float a = (float)Math.sqrt(inverse.m00*inverse.m00 + inverse.m01*inverse.m01) / fringe;
-        float b = (float)Math.sqrt(inverse.m10*inverse.m10 + inverse.m11*inverse.m11) / fringe;
+        float a = (float)Math.sqrt(scissor.m00*scissor.m00 + scissor.m01*scissor.m01) / fringe;
+        float b = (float)Math.sqrt(scissor.m10*scissor.m10 + scissor.m11*scissor.m11) / fringe;
         result += String.format(" %.4f x %.4f",  a, b);
         return result;
     }

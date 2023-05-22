@@ -12,11 +12,7 @@ import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.math.Matrix3;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector3;
-import com.badlogic.gdx.utils.Array;
-import com.badlogic.gdx.utils.BufferUtils;
-import com.badlogic.gdx.utils.Disposable;
-import com.badlogic.gdx.utils.ObjectIntMap;
-import com.badlogic.gdx.utils.ObjectMap;
+import com.badlogic.gdx.utils.*;
 
 import com.badlogic.gdx.math.*;
 import com.badlogic.gdx.graphics.Color;
@@ -32,7 +28,7 @@ public class CUVertexBuffer implements Disposable {
      * This type is used to initialize the attribute hooks as soon as
      * the shader is attached.
      */
-    class AttribData {
+    protected static class AttribData {
         /** The attribute size */
         public int size;
         /** The attribute type (as specified in OpenGL) */
@@ -46,40 +42,88 @@ public class CUVertexBuffer implements Disposable {
     };
 
     /** The data stride of this buffer (0 if there is only one attribute) */
-    public int stride;
+    protected int stride;
 
     /** Maximum number of vertices */
-    public int vertMax;
+    protected int vertMax;
+    /** The array buffer for drawing the shape */
+    protected IntBuffer vertArray;
 
-    /** The array buffer for drawing a the shape */
-    IntBuffer vertArray;
-    /** The vertex buffer handle for drawing a shape */
-    IntBuffer vertBuffer;
+    /** The vertex buffer handle */
+    protected IntBuffer vertBuffer;
     /** The vertex buffer for drawing a shape */
-    ByteBuffer vertData;
+    protected ByteBuffer vertData;
     /** Corresponding float buffer for the vert buffer */
-    FloatBuffer floatVertData;
-    /** The index buffer handle for drawing a shape */
-    IntBuffer indxBuffer;
+    protected FloatBuffer floatVertData;
+    /** The index buffer handle */
+    protected IntBuffer indxBuffer;
     /** The index buffer data for drawing a shape */
-    ByteBuffer indxData;
+    protected ByteBuffer indxData;
     /** Corresponding short buffer for the index buffer */
-    ShortBuffer shortIndxData;
+    protected ShortBuffer shortIndxData;
 
     /** The shader currently attached to this vertex buffer */
-    ShaderProgram shader;
+    protected ShaderProgram shader;
 
     /** The enabled attributes */
-    ObjectMap<String, Boolean> enabled;
+    protected ObjectMap<String, Boolean> enabled;
     /** The settings for each attribute */
-    ObjectMap<String, AttribData> attributes;
+    protected ObjectMap<String, AttribData> attributes;
+
+    /** Boolean tracks whether this buffer is bound (unreliable because OpenGL) */
+    private boolean isbound = false;
+
+    /** Whether this has been initialized, for finalizer */
+    private boolean initialized;
 
     /**
-     * Constructor for Vertex Buffer.
+     * Creates a vertex buffer to support the given stride and capacity
+     *
+     * The stride is the size of a single piece of vertex data (in bytes).
+     * The vertex buffer needs this value to set attribute locations. Since
+     * changing this value fundamentally changes the type of data that can be
+     * sent to this vertex buffer, it is set at buffer creation and cannot be
+     * changed.  This class does not support a stride value of 0.
+     *
+     * The vertex buffer will be initialized to support capacity many vertices
+     * (and 3 times as many indices). It will be initialized to support the
+     * GL_STREAM_DRAW drawing mode.
+     *
+     * @param stride    The size of a single piece of vertex data.
+     * @param capacity  The number of vertices that can be stored in the buffer
+     */
+    public CUVertexBuffer(int stride, int capacity) {
+        this(stride, capacity,3*capacity);
+    }
+
+    /**
+     * Creates a vertex buffer to support the given stride and capacity
+     *
+     * The stride is the size of a single piece of vertex data (in bytes).
+     * The vertex buffer needs this value to set attribute locations. Since
+     * changing this value fundamentally changes the type of data that can be
+     * sent to this vertex buffer, it is set at buffer creation and cannot be
+     * changed.  This class does not support a stride value of 0.
+     *
+     * The vertex buffer will be initialized to support capacity many vertices
+     * (and 3 times as many indices). It will be initialized to support the
+     * GL_STREAM_DRAW drawing mode.
+     *
      * @param stride The number of bytes between each vertex entry in the buffer
      * @param vertMax The maximum number of vertices in the buffer
+     * @param indxMax The maximum number of indices in the buffer
      */
     public CUVertexBuffer (int stride, int vertMax, int indxMax) {
+        if (stride <= 0) {
+            throw new IllegalArgumentException("Stride must be > 0: "+stride);
+        }
+        if (vertMax < 0) {
+            throw new IllegalArgumentException("Vertex capacity must be >= 0: "+vertMax);
+        }
+        if (indxMax < 0) {
+            throw new IllegalArgumentException("Index capacity must be >= 0: "+indxMax);
+        }
+
         GL30 gl = Gdx.gl30;
         this.stride = stride;
         this.vertMax = vertMax;
@@ -95,7 +139,7 @@ public class CUVertexBuffer implements Disposable {
         vertData = BufferUtils.newUnsafeByteBuffer(stride * vertMax);
         floatVertData = vertData.asFloatBuffer();
 
-        indxData = BufferUtils.newByteBuffer(indxMax * 2); // *2 because 2 is short size in bytes
+        indxData = BufferUtils.newByteBuffer(indxMax * 2);
         shortIndxData = indxData.asShortBuffer();
 
         enabled = new ObjectMap<>();
@@ -103,29 +147,42 @@ public class CUVertexBuffer implements Disposable {
 
         gl.glGenVertexArrays (1, vertArray);
         if (vertArray == null) {
-            throw new RuntimeException("Could not create vertex array.");
+            throw new GdxRuntimeException("Could not create vertex array.");
         }
 
         // Generate the buffers
         gl.glGenBuffers(1, vertBuffer);
         if (vertBuffer == null) {
             gl.glDeleteVertexArrays(1, vertArray);
-            throw new RuntimeException("Could not create vertex buffer.");
+            throw new GdxRuntimeException("Could not create vertex buffer.");
         }
 
         gl.glGenBuffers(1, indxBuffer);
         if (indxBuffer == null) {
             gl.glDeleteVertexArrays(1,vertArray);
             gl.glDeleteBuffers(1,vertBuffer);
-            throw new RuntimeException("Could not create index buffer.");
+            throw new GdxRuntimeException("Could not create index buffer.");
+        }
+
+        initialized = true;
+    }
+
+    /**
+     * Cleans up vertex buffer on Garbage collection
+     */
+    @Override
+    protected void finalize() throws Throwable {
+        if (initialized) {
+            dispose();
+            super.finalize();
         }
     }
 
-    @Override
-    protected void finalize() throws Throwable {
-//        dispose();
-    }
-
+    /**
+     * Deletes the vertex buffer, freeing all resources.
+     *
+     * You must reinitialize the vertex buffer to use it.
+     */
     public void dispose() {
         GL30 gl = Gdx.gl30;
         gl.glBindBuffer(GL30.GL_ARRAY_BUFFER, 0);
@@ -166,6 +223,7 @@ public class CUVertexBuffer implements Disposable {
         stride = 0;
     }
 
+    //region Binding
     /**
      * Binds this vertex buffer, making it active.
      *
@@ -186,6 +244,7 @@ public class CUVertexBuffer implements Disposable {
         if (shader != null) {
             shader.bind();
         }
+        isbound = true;
     }
 
     /**
@@ -206,6 +265,7 @@ public class CUVertexBuffer implements Disposable {
             gl.glBindBuffer( GL30.GL_ARRAY_BUFFER, 0);
             gl.glBindVertexArray(0);
         }
+        isbound = false;
     }
 
     /**
@@ -232,8 +292,7 @@ public class CUVertexBuffer implements Disposable {
 
                 int pos = gl.glGetAttribLocation(shader.getHandle(), key);
                 if (pos == -1) {
-//                    CUWarn("Active shader has no attribute %s", name.c_str());
-                    System.out.println("Active shader has no attribute " + key);
+                    Gdx.app.debug("OPENGL",String.format("Active shader has no attribute '%s'.",key));
                 } else if (enabled.get(key)) {
                     gl.glEnableVertexAttribArray(pos);
                     gl.glVertexAttribPointer(pos, attribute.size, attribute.type, attribute.norm, stride, attribute.offset);
@@ -243,8 +302,7 @@ public class CUVertexBuffer implements Disposable {
             }
 
             int error = gl.glGetError();
-            assert error == gl.GL_NO_ERROR : "VertexBuffer error";
-//            CUAssertLog(error == GL_NO_ERROR, "VertexBuffer: %s", gl_error_name(error).c_str());
+            assert error == GL30.GL_NO_ERROR : "VertexBuffer: "+CUGLDebug.errorName(error);
         } else {
             bind();
         }
@@ -267,14 +325,31 @@ public class CUVertexBuffer implements Disposable {
     /**
      * Returns true if this vertex is currently bound.
      *
+     * Because of limitations with LibGDX, this method may return an incorrect value
+     * if you have accessed OpenGL buffers directly (e.g. manually binding another
+     * buffer).  You should always unbind a buffer before binding a new one.
+     *
      * @return true if this vertex is currently bound.
      */
     public boolean isBound() {
-        GL30 gl = Gdx.gl30;
-        IntBuffer vao = BufferUtils.newIntBuffer(1);
-        gl.glGetIntegerv(gl.GL_VERTEX_ARRAY_BINDING, vao);
-        return vao.get(0) == vertArray.get(0);
+        return isbound;
     }
+
+    //endregion
+
+    //region Vertex Processing
+    /**
+     * Returns the stride of this vertex buffer
+     *
+     * The data loaded is expected to have the size of the vertex buffer stride.
+     * If it does not, strange things will happen.
+     *
+     * @return the stride of this vertex buffer
+     */
+    public int getStride() {
+        return stride;
+    }
+
 
     /**
      * Loads the given vertex buffer with data.
@@ -351,13 +426,12 @@ public class CUVertexBuffer implements Disposable {
         assert (error == gl.GL_NO_ERROR) : "VertexBuffer Error";
     }
 
+    /**
+     * Loads the given vertex buffer with indices with default usage of
+     * GL30.GL_STREAM_DRAW.
+     */
     public void loadIndexData(short[] data, int size) {
         loadIndexData(data, size, GL30.GL_STREAM_DRAW);
-    }
-
-    public void resetIndexBuffer(int size) {
-        ((Buffer)shortIndxData).position(0);
-        ((Buffer)shortIndxData).limit(size);
     }
 
     /**
@@ -417,11 +491,13 @@ public class CUVertexBuffer implements Disposable {
      * @param offset    The initial index to start with
      */
     public void drawInstanced(int mode, int count, int instance, int offset) {
-        //CUAssertLog(isBound(), "Vertex buffer is not bound"); // Problems on android emulator for now
+        assert(isBound()) : "Vertex is not bound";
         GL30 gl = Gdx.gl30;
         gl.glDrawElementsInstanced(mode, count, gl.GL_UNSIGNED_INT, offset * 4, instance);
     }
+    //endregion
 
+    //region Attributes
     /**
      * Defines the (periodic) position for the given attribute in this vertex buffer.
      *
@@ -455,8 +531,7 @@ public class CUVertexBuffer implements Disposable {
             shader.bind();
             int pos = gl.glGetAttribLocation(shader.getHandle(), name);
             if (pos == -1) {
-//                CUWarn("Active shader has no attribute %s", name.c_str());
-                System.out.println("Active shader has no attribute " + name);
+                Gdx.app.debug("OPENGL",String.format("Active shader has no attribute '%s'.",name));
             } else {
                 gl.glEnableVertexAttribArray(pos);
                 gl.glVertexAttribPointer(pos,data.size,data.type,data.norm,stride,data.offset);
@@ -511,5 +586,7 @@ public class CUVertexBuffer implements Disposable {
             }
         }
     }
+
+    //endregion
 }
 

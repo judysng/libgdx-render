@@ -155,6 +155,11 @@ public class CUTexture extends Texture {
             return GL30.GL_UNSIGNED_BYTE;
         }
 
+        /**
+         * Returns the number of bytes in a single pixel of this texture.
+         *
+         * @return the number of bytes in a single pixel of this texture.
+         */
         public int byteSize() {
             switch (this) {
                 case RGB:
@@ -171,11 +176,6 @@ public class CUTexture extends Texture {
                     return -1;
             }
             return -1;
-        }
-
-        public void read(ByteBuffer buffer) {
-            //
-
         }
 
         /**
@@ -264,18 +264,6 @@ public class CUTexture extends Texture {
         }
 
         /**
-         * Prepares the TextureData for consumption.
-         *
-         * This method must be called before a call to {@link #consumePixmap()} or
-         * {@link #consumeCustomData(int)}.
-         *
-         * This method can be called from a non OpenGL thread and should thus not
-         * interact with OpenGL.
-         */
-        public void prepare () {
-        }
-
-        /**
          * Returns the {@link Pixmap} of the current texture contents
          *
          * A call to {@link #prepare()} must precede a call to this method. Any internal
@@ -313,7 +301,7 @@ public class CUTexture extends Texture {
 
             if (glHandle > 0) {
                 assert false : "Texture is already initialized";
-                return; // In case asserts are off.
+                return;
             }
 
             // Query for handle
@@ -366,7 +354,6 @@ public class CUTexture extends Texture {
                 case RED_GREEN:
                     return Pixmap.Format.LuminanceAlpha;
                 default:
-                    // This may be a lie, but the size is right
                     return Pixmap.Format.RGBA8888;
             }
         }
@@ -378,16 +365,6 @@ public class CUTexture extends Texture {
          */
         public boolean useMipMaps () {
             return mipmaps;
-        }
-
-        /**
-         * Returns whether this implementation can cope with a EGL context loss.
-         *
-         * @return whether this implementation can cope with a EGL context loss.
-         */
-        public boolean isManaged () {
-            // HAHA no.
-            return false;
         }
     }
 
@@ -403,8 +380,7 @@ public class CUTexture extends Texture {
             (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF
     };
 
-    // #mark -
-    // #mark Fields
+    //region Friends
     /** The blank texture corresponding to cu_2x2_white_image */
     private static CUTexture BLANK = null;
 
@@ -419,9 +395,9 @@ public class CUTexture extends Texture {
 
     /** To query OpenGL information */
     private IntBuffer query = BufferUtils.newByteBuffer( 4*16 ).asIntBuffer();
+    //endregion
 
-    // #mark -
-    // #mark Constructors
+    //region Constructors
     /**
      * Creates a texture from a file with the given internal path
      *
@@ -621,9 +597,9 @@ public class CUTexture extends Texture {
         }
         return BLANK;
     }
+    //endregion
 
-    // #mark -
-    // #mark Data Access
+    //region Data Access
     /**
      * Sets this texture to have the contents of the given buffer.
      *
@@ -682,9 +658,9 @@ public class CUTexture extends Texture {
         Gdx.gl30.glTexImage2D(GL30.GL_TEXTURE_2D, 0, glFormat, texture.getWidth(), texture.getHeight(),
                 0, internal, datatype, data);
     }
+    //endregion
 
-    // #mark -
-    // #mark Attributes
+    //region Attributes
     /**
      * Sets the name of this texture.
      *
@@ -744,10 +720,9 @@ public class CUTexture extends Texture {
     public PixelFormat getFormat() {
         return pixelFormat;
     }
+    //endregion
 
-
-    // #mark -
-    // #mark Binding
+    //region Binding
     /**
      * Returns the OpenGL buffer for this texture.
      *
@@ -981,10 +956,9 @@ public class CUTexture extends Texture {
         query.clear();
         return (bind == glHandle);
     }
+    //endregion
 
-
-    // #mark -
-    // #mark Conversions
+    //region Conversions
     /**
      * Returns a string representation of this texture for debugging purposes.
      *
@@ -1001,4 +975,6 @@ public class CUTexture extends Texture {
         result += "]";
         return result;
     }
+
+    //endregion
 }

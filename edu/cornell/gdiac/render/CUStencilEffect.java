@@ -53,7 +53,7 @@ public class CUStencilEffect {
      *
      * @param effect    The stencil effect
      */
-    public static void applyEffect(StencilEffect effect) {
+    public static void applyEffect(Effect effect) {
         GL30 gl = Gdx.gl30;
         switch(effect) {
             case NATIVE:
@@ -401,7 +401,7 @@ public class CUStencilEffect {
         }
     }
 
-    public enum StencilEffect {
+    public enum Effect {
         /**
          * Differs the to the existing OpenGL stencil settings. (DEFAULT)
          * <p>
@@ -425,13 +425,13 @@ public class CUStencilEffect {
          * Restrict all drawing to the unified stencil region.
          *
          * In order for this effect to do anything, you must have created a
-         * stencil region with {@link StencilEffect#STAMP} or one of its variants.
+         * stencil region with {@link Effect#STAMP} or one of its variants.
          * This effect will process the drawing commands normally, but restrict all
          * drawing to the stencil region. This can be used to quickly draw
          * non-convex shapes by making a stencil and drawing a rectangle over
          * the stencil.
          *
-         * This effect is the same as {@link StencilEffect#CLIP_JOIN} in that it respects
+         * This effect is the same as {@link Effect#CLIP_JOIN} in that it respects
          * the union of the two halves of the stencil buffer.
          */
         CLIP,
@@ -440,12 +440,12 @@ public class CUStencilEffect {
          * Prohibits all drawing to the unified stencil region.
          *
          * In order for this effect to do anything, you must have created a
-         * stencil region with {@link StencilEffect#STAMP} or one of its variants.
+         * stencil region with {@link Effect#STAMP} or one of its variants.
          * This effect will process the drawing commands normally, but reject any
          * attempts to draw to the stencil region. This can be used to quickly
          * draw shape borders on top of a solid shape.
          *
-         * This effect is the same as {@link StencilEffect#MASK_JOIN} in that it respects
+         * This effect is the same as {@link Effect#MASK_JOIN} in that it respects
          * the union of the two halves of the stencil buffer.
          */
         MASK,
@@ -454,18 +454,18 @@ public class CUStencilEffect {
          * Restrict all drawing to the unified stencil region.
          *
          * In order for this effect to do anything, you must have created a
-         * stencil region with {@link StencilEffect#STAMP} or one of its variants.
+         * stencil region with {@link Effect#STAMP} or one of its variants.
          * This effect will process the drawing commands normally, but restrict all
          * drawing to the stencil region. This can be used to quickly draw
          * non-convex shapes by making a stencil and drawing a rectangle over
          * the stencil.
          *
-         * This effect is different from {@link StencilEffect#CLIP} in that it will
+         * This effect is different from {@link Effect#CLIP} in that it will
          * zero out the pixels it draws in the stencil buffer, effectively removing
          * them from the stencil region. In many applications, this is a fast
          * way to clear the stencil buffer once it is no longer needed.
          *
-         * This effect is the same as {@link StencilEffect#FILL_JOIN} in that it respects
+         * This effect is the same as {@link Effect#FILL_JOIN} in that it respects
          * the union of the two halves of the stencil buffer.
          */
         FILL,
@@ -476,8 +476,8 @@ public class CUStencilEffect {
          * This effect will not draw anything to the screen. Instead, it will
          * only draw to the stencil buffer directly. Any pixel drawn will be
          * zeroed in the buffer, removing it from the stencil region. The
-         * effect {@link StencilEffect#FILL} is a combination of this and
-         * {@link StencilEffect#CLIP}. Again, this is a potential optimization
+         * effect {@link Effect#FILL} is a combination of this and
+         * {@link Effect#CLIP}. Again, this is a potential optimization
          * for clearing the stencil buffer. However, on most tiled-based GPUs,
          * it is probably faster to simply clear the whole buffer.
          */
@@ -487,8 +487,8 @@ public class CUStencilEffect {
          * Adds a stencil region the unified buffer
          *
          * This effect will not have any immediate visible effects. Instead it
-         * creates a stencil region for the effects such as {@link StencilEffect#CLIP},
-         * {@link StencilEffect#MASK}, and the like.
+         * creates a stencil region for the effects such as {@link Effect#CLIP},
+         * {@link Effect#MASK}, and the like.
          *
          * The shapes are drawn to the stencil buffer using a nonzero fill
          * rule. This has the advantage that (unlike an even-odd fill rule)
@@ -501,7 +501,7 @@ public class CUStencilEffect {
          * are technical limitations. The size of the stencil buffer means
          * that more than 256 overlapping polygons of the same orientation
          * will cause unpredictable effects. If this is a problem, use an
-         * even odd fill rule instead like {@link StencilEffect#STAMP_NONE}
+         * even odd fill rule instead like {@link Effect#STAMP_NONE}
          * (which has no such limitations).
          */
         STAMP,
@@ -510,14 +510,14 @@ public class CUStencilEffect {
          * Adds a stencil region the lower buffer
          *
          * This effect will not have any immediate visible effects. Instead it
-         * creates a stencil region for the effects such as {@link StencilEffect#CLIP},
-         * {@link StencilEffect#MASK}, and the like.
+         * creates a stencil region for the effects such as {@link Effect#CLIP},
+         * {@link Effect#MASK}, and the like.
          *
-         * Like {@link StencilEffect#STAMP}, shapes are drawn to the stencil buffer
+         * Like {@link Effect#STAMP}, shapes are drawn to the stencil buffer
          * instead of the screen. But unlike stamp, this effect is always additive.
          * It ignores path orientation, and does not support holes. This allows
          * the effect to implement a nonzero fill rule while using only half
-         * of the buffer. This effect is equivalent to {@link StencilEffect#CARVE_NONE}
+         * of the buffer. This effect is equivalent to {@link Effect#CARVE_NONE}
          * in that it uses only the lower half.
          *
          * The primary application of this effect is to create stencils from
@@ -529,70 +529,70 @@ public class CUStencilEffect {
         /**
          * Limits drawing so that each pixel is updated once.
          *
-         * This effect is a variation of {@link StencilEffect#CARVE} that also draws
+         * This effect is a variation of {@link Effect#CARVE} that also draws
          * as it writes to the stencil buffer.  This guarantees that each pixel is
          * updated exactly once. This is used by extruded paths so that
          * overlapping sections are not drawn twice (which has negative
          * effects on alpha blending).
          *
-         * This effect is equivalent to {@link StencilEffect#CLAMP_NONE} in that
+         * This effect is equivalent to {@link Effect#CLAMP_NONE} in that
          * it uses only the lower half.
          */
         CLAMP,
 
         /**
-         * Applies {@link StencilEffect#CLIP} using the upper stencil buffer only.
+         * Applies {@link Effect#CLIP} using the upper stencil buffer only.
          *
-         * As with {@link StencilEffect#CLIP}, this effect restricts drawing to
+         * As with {@link Effect#CLIP}, this effect restricts drawing to
          * the stencil region. However, this effect only uses the stencil region
          * present in the upper stencil buffer.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#NONE_STAMP}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the lower stencil buffer
+         * {@link Effect#NONE_STAMP}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the lower stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         NONE_CLIP,
 
         /**
-         * Applies {@link StencilEffect#MASK} using the upper stencil buffer only.
+         * Applies {@link Effect#MASK} using the upper stencil buffer only.
          *
-         * As with {@link StencilEffect#MASK}, this effect prohibits drawing to
+         * As with {@link Effect#MASK}, this effect prohibits drawing to
          * the stencil region. However, this effect only uses the stencil region
          * present in the upper stencil buffer.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#NONE_STAMP}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the lower stencil buffer
+         * {@link Effect#NONE_STAMP}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the lower stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         NONE_MASK,
 
         /**
-         * Applies {@link StencilEffect#FILL} using the upper stencil buffer only.
+         * Applies {@link Effect#FILL} using the upper stencil buffer only.
          *
-         * As with {@link StencilEffect#FILL}, this effect limits drawing to
+         * As with {@link Effect#FILL}, this effect limits drawing to
          * the stencil region. However, this effect only uses the stencil region
          * present in the upper stencil buffer.  It also only zeroes out the upper
          * stencil buffer.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#NONE_STAMP}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the lower stencil buffer
+         * {@link Effect#NONE_STAMP}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the lower stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         NONE_FILL,
 
         /**
-         * Applies {@link StencilEffect#WIPE} using the upper stencil buffer only.
+         * Applies {@link Effect#WIPE} using the upper stencil buffer only.
          *
-         * As with {@link StencilEffect#WIPE}, this effect zeroes out the stencil
+         * As with {@link Effect#WIPE}, this effect zeroes out the stencil
          * region, erasing parts of it. However, its effects are limited to the upper
          * stencil region.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#NONE_STAMP}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the lower stencil buffer
+         * {@link Effect#NONE_STAMP}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the lower stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         NONE_WIPE,
@@ -602,9 +602,9 @@ public class CUStencilEffect {
          *
          * This effect will not have any immediate visible effect on the screen
          * screen. Instead, it creates a stencil region for the effects such as
-         * {@link StencilEffect#CLIP}, {@link StencilEffect#MASK}, and the like.
+         * {@link Effect#CLIP}, {@link Effect#MASK}, and the like.
          *
-         * Unlike {@link StencilEffect#STAMP}, the region created is limited to
+         * Unlike {@link Effect#STAMP}, the region created is limited to
          * the upper half of the stencil buffer. That is because the shapes are
          * drawn to the buffer with an even-odd fill rule (which does not require
          * the full stencil buffer to implement). This has the disadvantage
@@ -612,7 +612,7 @@ public class CUStencilEffect {
          * However, it has the advantage that the this stamp supports a wider
          * array of effects than the simple stamp effect.
          *
-         * Use {@link StencilEffect#NONE_CLAMP} if you have an simple stencil with
+         * Use {@link Effect#NONE_CLAMP} if you have an simple stencil with
          * no holes that you wish to write to the upper half of the buffer.
          */
         NONE_STAMP,
@@ -622,8 +622,8 @@ public class CUStencilEffect {
          *
          * This value will not have any immediate visible effect on the screen.
          * Instead, it creates a stencil region for the effects such as
-         * {@link StencilEffect#CLIP}, {@link StencilEffect#MASK}, and the like.
-         * Like {@link StencilEffect#STAMP}, shapes are drawn to the stencil buffer
+         * {@link Effect#CLIP}, {@link Effect#MASK}, and the like.
+         * Like {@link Effect#STAMP}, shapes are drawn to the stencil buffer
          * instead of the screen. But unlike stamp, this effect is always additive.
          * It ignores path orientation, and does not support holes. This allows
          * the effect to implement a nonzero fill rule while using only the
@@ -638,7 +638,7 @@ public class CUStencilEffect {
         /**
          * Uses the upper buffer to limit each pixel to single update.
          *
-         * This effect is a variation of {@link StencilEffect#NONE_CARVE} that
+         * This effect is a variation of {@link Effect#NONE_CARVE} that
          * also draws as it writes to the upper stencil buffer. This guarantees
          * that each pixel is updated exactly once. This is used by extruded paths
          * so that overlapping sections are not drawn twice (which has negative
@@ -649,7 +649,7 @@ public class CUStencilEffect {
         /**
          * Restrict all drawing to the unified stencil region.
          *
-         * This effect is the same as {@link StencilEffect#CLIP} in that it respects
+         * This effect is the same as {@link Effect#CLIP} in that it respects
          * the union of the two halves of the stencil buffer.
          */
         CLIP_JOIN,
@@ -657,53 +657,53 @@ public class CUStencilEffect {
         /**
          * Restrict all drawing to the intersecting stencil region.
          *
-         * This effect is the same as {@link StencilEffect#CLIP}, except that
+         * This effect is the same as {@link Effect#CLIP}, except that
          * it limits drawing to the intersection of the stencil regions in the
          * two halves of the stencil buffer. If a unified stencil region was
-         * created by {@link StencilEffect#STAMP}, then the results of this
+         * created by {@link Effect#STAMP}, then the results of this
          * effect are unpredictable.
          */
         CLIP_MEET,
 
         /**
-         * Applies {@link StencilEffect#CLIP} using the lower stencil buffer only.
+         * Applies {@link Effect#CLIP} using the lower stencil buffer only.
          *
-         * As with {@link StencilEffect#CLIP}, this effect restricts drawing to
+         * As with {@link Effect#CLIP}, this effect restricts drawing to
          * the stencil region. However, this effect only uses the stencil region
          * present in the lower stencil buffer.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#NONE_STAMP}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the lower stencil buffer
+         * {@link Effect#NONE_STAMP}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the lower stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         CLIP_NONE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLIP} with an upper {@link StencilEffect#MASK}.
+         * Applies a lower buffer {@link Effect#CLIP} with an upper {@link Effect#MASK}.
          *
          * This command restricts drawing to the stencil region in the lower
          * buffer while prohibiting any drawing to the stencil region in the
          * upper buffer. If this effect is applied to a unified stencil region
-         * created by {@link StencilEffect#STAMP}, then the results are unpredictable.
+         * created by {@link Effect#STAMP}, then the results are unpredictable.
          */
         CLIP_MASK,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLIP} with an upper {@link StencilEffect#FILL}.
+         * Applies a lower buffer {@link Effect#CLIP} with an upper {@link Effect#FILL}.
          *
          * This command restricts drawing to the stencil region in the unified
          * stencil region of the two buffers. However, it only zeroes pixels in
          * the stencil region of the upper buffer; the lower buffer is untouched.
          * If this effect is applied to a unified stencil region created by
-         * {@link StencilEffect#STAMP}, then the results are unpredictable.
+         * {@link Effect#STAMP}, then the results are unpredictable.
          */
         CLIP_FILL,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLIP} with an upper {@link StencilEffect#WIPE}.
+         * Applies a lower buffer {@link Effect#CLIP} with an upper {@link Effect#WIPE}.
          *
-         * As with {@link StencilEffect#WIPE}, this command does not do any drawing
+         * As with {@link Effect#WIPE}, this command does not do any drawing
          * on screen. Instead, it zeroes out the upper stencil buffer. However, it is
          * clipped by the stencil region in the lower buffer, so that it does not zero
          * out any pixel outside this region. Hence this is a way to erase the lower
@@ -712,9 +712,9 @@ public class CUStencilEffect {
         CLIP_WIPE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLIP} with an upper {@link StencilEffect#STAMP}.
+         * Applies a lower buffer {@link Effect#CLIP} with an upper {@link Effect#STAMP}.
          *
-         * As with {@link StencilEffect#NONE_CLAMP}, this writes a shape to the upper
+         * As with {@link Effect#NONE_CLAMP}, this writes a shape to the upper
          * stencil buffer using an even-odd fill rule. This means that adding a shape
          * on top of existing shape has an erasing effect. However, it also restricts
          * its operation to the stencil region in the lower stencil buffer. Note
@@ -724,9 +724,9 @@ public class CUStencilEffect {
         CLIP_STAMP,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLIP} with an upper {@link StencilEffect#CARVE}.
+         * Applies a lower buffer {@link Effect#CLIP} with an upper {@link Effect#CARVE}.
          *
-         * As with {@link StencilEffect#NONE_CARVE}, this writes an additive shape
+         * As with {@link Effect#NONE_CARVE}, this writes an additive shape
          * to the upper stencil buffer. However, it also restricts its operation to
          * the stencil region in the lower stencil buffer. Note that if a pixel
          * is clipped while drawing, it will not be added the stencil region in
@@ -736,9 +736,9 @@ public class CUStencilEffect {
         CLIP_CARVE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLIP} with an upper {@link StencilEffect#CLAMP}.
+         * Applies a lower buffer {@link Effect#CLIP} with an upper {@link Effect#CLAMP}.
          *
-         * As with {@link StencilEffect#NONE_CLAMP}, this draws a nonoverlapping
+         * As with {@link Effect#NONE_CLAMP}, this draws a nonoverlapping
          * shape using the upper stencil buffer. However, it also restricts its
          * operation to the stencil region in the lower stencil buffer. Note that
          * if a pixel is clipped while drawing, it will not be added the stencil
@@ -749,7 +749,7 @@ public class CUStencilEffect {
         /**
          * Prohibits all drawing to the unified stencil region.
          *
-         * This effect is the same as {@link StencilEffect#MASK} in that it respects
+         * This effect is the same as {@link Effect#MASK} in that it respects
          * the union of the two halves of the stencil buffer.
          */
         MASK_JOIN,
@@ -757,40 +757,40 @@ public class CUStencilEffect {
         /**
          * Prohibits all drawing to the intersecting stencil region.
          *
-         * This effect is the same as {@link StencilEffect#MASK}, except that
+         * This effect is the same as {@link Effect#MASK}, except that
          * it limits drawing to the intersection of the stencil regions in the
          * two halves of the stencil buffer. If a unified stencil region was
-         * created by {@link StencilEffect#STAMP}, then the results of this effect
+         * created by {@link Effect#STAMP}, then the results of this effect
          * are unpredictable.
          */
         MASK_MEET,
 
         /**
-         * Applies {@link StencilEffect#MASK} using the lower stencil buffer only.
+         * Applies {@link Effect#MASK} using the lower stencil buffer only.
          *
-         * As with {@link StencilEffect#MASK}, this effect prohibits drawing to
+         * As with {@link Effect#MASK}, this effect prohibits drawing to
          * the stencil region. However, this effect only uses the stencil region
          * present in the lower stencil buffer.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#STAMP_NONE}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the upper stencil buffer
+         * {@link Effect#STAMP_NONE}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the upper stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         MASK_NONE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#MASK} with an upper {@link StencilEffect#CLIP}.
+         * Applies a lower buffer {@link Effect#MASK} with an upper {@link Effect#CLIP}.
          *
          * This command restricts drawing to the stencil region in the upper
          * buffer while prohibiting any drawing to the stencil region in the
          * lower buffer. If this effect is applied to a unified stencil region
-         * created by {@link StencilEffect#STAMP}, then the results are unpredictable.
+         * created by {@link Effect#STAMP}, then the results are unpredictable.
          */
         MASK_CLIP,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#MASK} with an upper {@link StencilEffect#FILL}.
+         * Applies a lower buffer {@link Effect#MASK} with an upper {@link Effect#FILL}.
          *
          * This command restricts drawing to the stencil region in the upper
          * buffer while prohibiting any drawing to the stencil region in the
@@ -799,14 +799,14 @@ public class CUStencilEffect {
          * only zero those pixels that were drawn.
          *
          * If this effect is applied to a unified stencil region created by
-         * {@link StencilEffect#STAMP}, then the results are unpredictable.
+         * {@link Effect#STAMP}, then the results are unpredictable.
          */
         MASK_FILL,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#MASK} with an upper {@link StencilEffect#WIPE}.
+         * Applies a lower buffer {@link Effect#MASK} with an upper {@link Effect#WIPE}.
          *
-         * As with {@link StencilEffect#WIPE}, this command does not do any drawing
+         * As with {@link Effect#WIPE}, this command does not do any drawing
          * on screen. Instead, it zeroes out the upper stencil buffer. However, it
          * is masked by the stencil region in the lower buffer, so that it does not
          * zero out any pixel inside this region.
@@ -814,9 +814,9 @@ public class CUStencilEffect {
         MASK_WIPE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#MASK} with an upper {@link StencilEffect#STAMP}.
+         * Applies a lower buffer {@link Effect#MASK} with an upper {@link Effect#STAMP}.
          *
-         * As with {@link StencilEffect#NONE_STAMP}, this writes a shape to the
+         * As with {@link Effect#NONE_STAMP}, this writes a shape to the
          * upper stencil buffer using an even-odd fill rule. This means that adding
          * a shape on top of existing shape has an erasing effect. However, it also
          * masks its operation by the stencil region in the lower stencil buffer. Note
@@ -826,9 +826,9 @@ public class CUStencilEffect {
         MASK_STAMP,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#MASK} with an upper {@link StencilEffect#CARVE}.
+         * Applies a lower buffer {@link Effect#MASK} with an upper {@link Effect#CARVE}.
          *
-         * As with {@link StencilEffect#NONE_CARVE}, this writes an additive shape
+         * As with {@link Effect#NONE_CARVE}, this writes an additive shape
          * to the upper stencil buffer. However, it also prohibits any drawing to
          * the stencil region in the lower stencil buffer. Note that if a pixel is
          * masked while drawing, it will not be added the stencil region in
@@ -837,9 +837,9 @@ public class CUStencilEffect {
         MASK_CARVE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#MASK} with an upper {@link StencilEffect#CLAMP}.
+         * Applies a lower buffer {@link Effect#MASK} with an upper {@link Effect#CLAMP}.
          *
-         * As with {@link StencilEffect#NONE_CLAMP}, this draws a nonoverlapping
+         * As with {@link Effect#NONE_CLAMP}, this draws a nonoverlapping
          * shape using the upper stencil buffer. However, it also prohibits any
          * drawing to the stencil region in the lower stencil buffer. Note that
          * if a pixel is masked while drawing, it will not be added the stencil
@@ -850,7 +850,7 @@ public class CUStencilEffect {
         /**
          * Restrict all drawing to the unified stencil region.
          *
-         * This effect is the same as {@link StencilEffect#FILL} in that it respects
+         * This effect is the same as {@link Effect#FILL} in that it respects
          * the union of the two halves of the stencil buffer.
          */
         FILL_JOIN,
@@ -858,33 +858,33 @@ public class CUStencilEffect {
         /**
          * Restrict all drawing to the intersecting stencil region.
          *
-         * This effect is the same as {@link StencilEffect#FILL}, except that it
+         * This effect is the same as {@link Effect#FILL}, except that it
          * limits drawing to the intersection of the stencil regions in the two
          * halves of the stencil buffer.
          *
          * When zeroing out pixels, this operation zeroes out both halves of
          * the stencil buffer. If a unified stencil region was created by
-         * {@link StencilEffect#STAMP}, the results of this effect are unpredictable.
+         * {@link Effect#STAMP}, the results of this effect are unpredictable.
          */
         FILL_MEET,
 
         /**
-         * Applies {@link StencilEffect#FILL} using the lower stencil buffer only.
+         * Applies {@link Effect#FILL} using the lower stencil buffer only.
          *
-         * As with {@link StencilEffect#FILL}, this effect restricts drawing to
+         * As with {@link Effect#FILL}, this effect restricts drawing to
          * the stencil region. However, this effect only uses the stencil region
          * present in the lower stencil buffer. It also only zeroes the stencil
          * region in this lower buffer.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#NONE_STAMP}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the lower stencil buffer
+         * {@link Effect#NONE_STAMP}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the lower stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         FILL_NONE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#FILL} with an upper {@link StencilEffect#MASK}.
+         * Applies a lower buffer {@link Effect#FILL} with an upper {@link Effect#MASK}.
          *
          * This command restricts drawing to the stencil region in the lower
          * buffer while prohibiting any drawing to the stencil region in the
@@ -892,54 +892,54 @@ public class CUStencilEffect {
          *
          * When zeroing out the stencil region, this part of the effect is only
          * applied to the lower buffer. If this effect is applied to a unified
-         * stencil region created by {@link StencilEffect#STAMP}, then the results
+         * stencil region created by {@link Effect#STAMP}, then the results
          * are unpredictable.
          */
         FILL_MASK,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#FILL} with an upper {@link StencilEffect#CLIP}.
+         * Applies a lower buffer {@link Effect#FILL} with an upper {@link Effect#CLIP}.
          *
          * This command restricts drawing to the stencil region in the unified
          * stencil region of the two buffers. However, it only zeroes pixels in
          * the stencil region of the lower buffer; the lower buffer is untouched.
          * If this effect is applied to a unified stencil region created by
-         * {@link StencilEffect#STAMP}, then the results are unpredictable.
+         * {@link Effect#STAMP}, then the results are unpredictable.
          */
         FILL_CLIP,
 
         /**
-         * Applies {@link StencilEffect#WIPE} using the lower stencil buffer only.
+         * Applies {@link Effect#WIPE} using the lower stencil buffer only.
          *
-         * As with {@link StencilEffect#WIPE}, this effect zeroes out the stencil
+         * As with {@link Effect#WIPE}, this effect zeroes out the stencil
          * region, erasing parts of it. However, its effects are limited to the lower
          * stencil region.
          *
          * This effect is designed to be used with stencil regions created by
-         * {@link StencilEffect#NONE_STAMP}. While it can be used by a stencil
-         * region created by {@link StencilEffect#STAMP}, the lower stencil buffer
+         * {@link Effect#NONE_STAMP}. While it can be used by a stencil
+         * region created by {@link Effect#STAMP}, the lower stencil buffer
          * is ignored, and hence the results are unpredictable.
          */
         WIPE_NONE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#WIPE} with an upper {@link StencilEffect#MASK}.
+         * Applies a lower buffer {@link Effect#WIPE} with an upper {@link Effect#MASK}.
          *
          * This command erases from the stencil region in the lower buffer.
          * However, it limits its erasing to locations that are not masked by
          * the stencil region in the upper buffer. If this effect is applied
-         * to a unified stencil region created by {@link StencilEffect#STAMP},
+         * to a unified stencil region created by {@link Effect#STAMP},
          * the results are unpredictable.
          */
         WIPE_MASK,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#WIPE} with an upper {@link StencilEffect#CLIP}.
+         * Applies a lower buffer {@link Effect#WIPE} with an upper {@link Effect#CLIP}.
          *
          * This command erases from the stencil region in the lower buffer.
          * However, it limits its erasing to locations that are contained in
          * the stencil region in the upper buffer. If this effect is applied
-         * to a unified stencil region created by {@link StencilEffect#STAMP},
+         * to a unified stencil region created by {@link Effect#STAMP},
          * the results are unpredictable.
          */
         WIPE_CLIP,
@@ -949,9 +949,9 @@ public class CUStencilEffect {
          *
          * This effect will not have any immediate visible effect on the screen
          * screen. Instead, it creates a stencil region for the effects such as
-         * {@link StencilEffect#CLIP}, {@link StencilEffect#MASK}, and the like.
+         * {@link Effect#CLIP}, {@link Effect#MASK}, and the like.
          *
-         * Unlike {@link StencilEffect#STAMP}, the region created is limited to
+         * Unlike {@link Effect#STAMP}, the region created is limited to
          * the lower half of the stencil buffer. That is because the shapes are
          * drawn to the buffer with an even-odd fill rule (which does not require
          * the full stencil buffer to implement). This has the disadvantage
@@ -962,9 +962,9 @@ public class CUStencilEffect {
         STAMP_NONE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#STAMP} with an upper {@link StencilEffect#CLIP}.
+         * Applies a lower buffer {@link Effect#STAMP} with an upper {@link Effect#CLIP}.
          *
-         * As with {@link StencilEffect#STAMP_NONE}, this writes a shape to the
+         * As with {@link Effect#STAMP_NONE}, this writes a shape to the
          * lower stencil buffer using an even-odd fill rule. This means that adding
          * a shape on top of existing shape has an erasing effect. However, it also
          * restricts its operation to the stencil region in the upper stencil buffer.
@@ -974,9 +974,9 @@ public class CUStencilEffect {
         STAMP_CLIP,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#STAMP} with an upper {@link StencilEffect#MASK}.
+         * Applies a lower buffer {@link Effect#STAMP} with an upper {@link Effect#MASK}.
          *
-         * As with {@link StencilEffect#STAMP_NONE}, this writes a shape to the lower
+         * As with {@link Effect#STAMP_NONE}, this writes a shape to the lower
          * stencil buffer using an even-odd fill rule. This means that adding a shape
          * on top of existing shape has an erasing effect. However, it also masks
          * its operation by the stencil region in the upper stencil buffer. Note
@@ -990,9 +990,9 @@ public class CUStencilEffect {
          *
          * This effect will not have any immediate visible effect on the screen
          * screen. Instead, it creates a stencil region for the effects such as
-         * {@link StencilEffect#CLIP}, {@link StencilEffect#MASK}, and the like.
+         * {@link Effect#CLIP}, {@link Effect#MASK}, and the like.
          *
-         * Unlike {@link StencilEffect#STAMP}, the region is create twice and put in
+         * Unlike {@link Effect#STAMP}, the region is create twice and put in
          * both the upper and the lower stencil buffer. That is because the shapes
          * are drawn to the buffer with an even-odd fill rule (which does not require
          * the full stencil buffer to implement). This has the disadvantage that
@@ -1007,15 +1007,15 @@ public class CUStencilEffect {
         /**
          * Adds a stencil region to the lower buffer
          *
-         * This effect is equivalent to {@link StencilEffect#CARVE}, since it only uses
+         * This effect is equivalent to {@link Effect#CARVE}, since it only uses
          * half of the stencil buffer.
          */
         CARVE_NONE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CARVE} with an upper {@link StencilEffect#CLIP}.
+         * Applies a lower buffer {@link Effect#CARVE} with an upper {@link Effect#CLIP}.
          *
-         * As with {@link StencilEffect#CARVE_NONE}, this writes an additive shape
+         * As with {@link Effect#CARVE_NONE}, this writes an additive shape
          * to the lower stencil buffer. However, it also restricts its operation to
          * the stencil region in the upper stencil buffer. Note that if a pixel
          * is clipped while drawing, it will not be added the stencil region in
@@ -1025,9 +1025,9 @@ public class CUStencilEffect {
         CARVE_CLIP,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CARVE} with an upper {@link StencilEffect#MASK}.
+         * Applies a lower buffer {@link Effect#CARVE} with an upper {@link Effect#MASK}.
          *
-         * As with {@link StencilEffect#CARVE_NONE}, this writes an additive shape
+         * As with {@link Effect#CARVE_NONE}, this writes an additive shape
          * to the lower stencil buffer. However, it also prohibits any drawing to
          * the stencil region in the upper stencil buffer. Note that if a pixel is
          * masked while drawing, it will not be added the stencil region in
@@ -1038,7 +1038,7 @@ public class CUStencilEffect {
         /**
          * Adds a stencil region to both the lower and upper buffer
          *
-         * This effect is similar to {@link StencilEffect#CARVE}, except that it uses
+         * This effect is similar to {@link Effect#CARVE}, except that it uses
          * both buffers. This is to give a wider degree of flexibility.
          */
         CARVE_BOTH,
@@ -1046,15 +1046,15 @@ public class CUStencilEffect {
         /**
          * Uses the lower buffer to limit each pixel to single update.
          *
-         * This effect is equivalent to {@link StencilEffect#CLAMP}, since it only uses
+         * This effect is equivalent to {@link Effect#CLAMP}, since it only uses
          * half of the stencil buffer.
          */
         CLAMP_NONE,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLAMP} with an upper {@link StencilEffect#CLIP}.
+         * Applies a lower buffer {@link Effect#CLAMP} with an upper {@link Effect#CLIP}.
          *
-         * As with {@link StencilEffect#CLAMP_NONE}, this draws a nonoverlapping
+         * As with {@link Effect#CLAMP_NONE}, this draws a nonoverlapping
          * shape using the lower stencil buffer. However, it also restricts its
          * operation to the stencil region in the upper stencil buffer. Note that
          * if a pixel is clipped while drawing, it will not be added the stencil
@@ -1063,9 +1063,9 @@ public class CUStencilEffect {
         CLAMP_CLIP,
 
         /**
-         * Applies a lower buffer {@link StencilEffect#CLAMP} with an upper {@link StencilEffect#MASK}.
+         * Applies a lower buffer {@link Effect#CLAMP} with an upper {@link Effect#MASK}.
          *
-         * As with {@link StencilEffect#CLAMP_NONE}, this draws a nonoverlapping
+         * As with {@link Effect#CLAMP_NONE}, this draws a nonoverlapping
          * shape using the lower stencil buffer. However, it also prohibits any
          * drawing to the stencil region in the upper stencil buffer. Note that
          * if a pixel is masked while drawing, it will not be added the stencil

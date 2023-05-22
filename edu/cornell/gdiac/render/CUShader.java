@@ -46,11 +46,10 @@ public class CUShader extends ShaderProgram implements Disposable {
     ByteBuffer name = BufferUtils.newByteBuffer(16); // 16 is max length
     IntBuffer size = BufferUtils.newIntBuffer(1);
 
-    /** Constructs a new ShaderProgram and immediately compiles it.
+    /** Constructs a new CUShader and immediately compiles it.
      *
      * @param vertexShader the vertex shader
      * @param fragmentShader the fragment shader */
-
     public CUShader (String vertexShader, String fragmentShader) {
         super(vertexShader, fragmentShader);
         GL30 gl = Gdx.gl30;
@@ -85,6 +84,12 @@ public class CUShader extends ShaderProgram implements Disposable {
         }
     }
 
+    /**
+     * Constructs a new CUShader and immediately compiles it after
+     * reading the file.
+     *
+     * @param vertexShader the vertex shader
+     * @param fragmentShader the fragment shader */
     public CUShader (FileHandle vertexShader, FileHandle fragmentShader) {
         this(vertexShader.readString(), fragmentShader.readString());
     }
@@ -238,7 +243,7 @@ public class CUShader extends ShaderProgram implements Disposable {
                 String name = getUniforms()[in];
                 int offset = buffer.getOffset(name);
                 if (offset == -1) { // Invalid offset
-                    System.out.println("Uniform buffer is missing variable '" + name + "'.");
+                    Gdx.app.debug("OPENGL",String.format("Uniform buffer is missing variable '%s'.",name));
                 }
             }
         }
@@ -255,7 +260,7 @@ public class CUShader extends ShaderProgram implements Disposable {
         }
         for (String str : check.keys()) {
             if (!check.get(str)) {
-                System.out.println("Shader is missing variable '" + str + "'.");
+                Gdx.app.debug("OPENGL",String.format("Shader is missing variable '%s'.",name));
             }
         }
 

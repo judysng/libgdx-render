@@ -15,9 +15,9 @@ import java.util.ArrayList;
  *
  * A render target allows the user to draw to a texture before drawing to a screen.
  * This allows for the potential for post-processing effects.  To draw to a render
- * target simply call the {@link #bind} method before drawing.  From that point on
+ * target simply call the {@link #begin} method before drawing.  From that point on
  * all drawing commands will be sent to the associated texture instead of the screen.
- * Call {@link #unbind} to resume drawing to the screen.
+ * Call {@link #end} to resume drawing to the screen.
  *
  * Frame buffers should not be stacked.  It is not safe to call a begin/end pair of
  * one render target inside of another begin/end pair.  Control to the screen should
@@ -61,6 +61,8 @@ public class CURenderTarget {
     private CUTexture[] outputs;
     /** The bind points for linking up the shader output variables */
     private int[] bindpoints;
+    /** The clear color for this render target */
+    private Color clearcol;
 
     // #mark Setup
     /**
@@ -248,6 +250,7 @@ public class CURenderTarget {
         this.height = height;
         this.outputs = new CUTexture[outputs];
         bindpoints = new int[outputs];
+        clearcol = new Color(Color.CLEAR);
 
         if (prepareBuffer()) {
             for(int ii = 0; ii < outputs; ii++) {
@@ -285,6 +288,7 @@ public class CURenderTarget {
         this.height = height;
         this.outputs = new CUTexture[outputs.size];
         bindpoints = new int[outputs.size];
+        clearcol = new Color(Color.CLEAR);
 
         if (prepareBuffer()) {
             int ii = 0;
@@ -324,6 +328,7 @@ public class CURenderTarget {
         this.height = height;
         this.outputs = new CUTexture[outputs.size];
         bindpoints = new int[outputs.size];
+        clearcol = new Color(Color.CLEAR);
 
         if (prepareBuffer()) {
             int ii = 0;
@@ -363,6 +368,7 @@ public class CURenderTarget {
         this.height = height;
         this.outputs = new CUTexture[outputs.length];
         bindpoints = new int[outputs.length];
+        clearcol = new Color(Color.CLEAR);
 
         if (prepareBuffer()) {
             int ii = 0;
@@ -412,12 +418,12 @@ public class CURenderTarget {
         outputs = null;
         depthst = null;
         bindpoints = null;
+        clearcol = null;
         width  = 0;
         height = 0;
     }
 
-    // #mark -
-    // #mark Attributes
+    //region Attributes
     /**
      * Returns the width of this render target
      *
@@ -435,6 +441,26 @@ public class CURenderTarget {
     public int getHeight() {
         return height;
     }
+
+    /**
+     * Returns the clear color for this render target.
+     *
+     * The clear color is used to clear the texture when the method
+     * {@link #begin} is called.
+     *
+     * @return the clear color for this render target.
+     */
+    Color getClearColor() { return clearcol; }
+
+    /**
+     * Sets the clear color for this render target.
+     *
+     * The clear color is used to clear the texture when the method
+     * {@link #begin} is called.
+     *
+     * @param color    The clear color for this render target.
+     */
+    public void setClearColor(Color color) { clearcol.set(color); }
 
     /**
      * Returns the number of output textures for this render target.
@@ -485,25 +511,28 @@ public class CURenderTarget {
     public CUTexture getDepthStencil() {
         return depthst;
     }
+    //endregion
 
-    // #mark -
-    // #mark Binding
+    //region Drawing
     /**
      * Binds this frame buffer so that it can receive draw commands.
      *
      * This method ets the viewpoint to match the size of this render target (which
      * may not be the same as the screen). The old viewport is saved and will be
-     * restored when {@link #unbind} is called.
+     * restored when {@link #end} is called.
      *
      * It is NOT safe to call a bind/unbind pair of a render target inside of
      * another render target.  Render targets do not keep a stack.  They always
      * return control to the default render target (the screen) when done.
      */
-    public void bind() {
+    public void begin() {
         Gdx.gl30.glGetIntegerv(GL30.GL_VIEWPORT, viewport);
 
         Gdx.gl30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, framebo);
         Gdx.gl30.glViewport(0, 0, width, height);
+
+        Gdx.gl30.glClearColor(clearcol.r, clearcol.g, clearcol.b, clearcol.a);
+        Gdx.gl30.glClear(Gdx.gl30.GL_COLOR_BUFFER_BIT | Gdx.gl30.GL_DEPTH_BUFFER_BIT | Gdx.gl30.GL_STENCIL_BUFFER_BIT);
     }
 
     /**
@@ -516,7 +545,7 @@ public class CURenderTarget {
      * another render target.  Render targets do not keep a stack.  They always
      * return control to the default render target (the screen) when done.
      */
-    public void unbind() {
+    public void end() {
         int[] vport = new int[4];
         Gdx.gl30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
         viewport.get(vport,0,4);
@@ -536,9 +565,9 @@ public class CURenderTarget {
         query.clear();
         return orig == framebo;
     }
+    //endregion
 
-    // #mark -
-    // Texture Access
+    // region Texture Access
     /**
      * Returns the pixel data for the primary output texture.
      *
@@ -660,6 +689,7 @@ public class CURenderTarget {
 
         return pixmap;
     }
+    //endregion
 
     /**
      * Returns a string representation of this texture for debugging purposes.

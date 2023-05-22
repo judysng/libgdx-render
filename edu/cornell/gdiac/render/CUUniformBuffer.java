@@ -2,40 +2,55 @@ package edu.cornell.gdiac.render;
 
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.HashMap;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL30;
+import com.badlogic.gdx.math.*;
 import com.badlogic.gdx.utils.BufferUtils;
 import com.badlogic.gdx.utils.Disposable;
+import com.badlogic.gdx.utils.GdxRuntimeException;
 
 public class CUUniformBuffer implements Disposable {
     /** The OpenGL uniform buffer; 0 is not allocated. */
-    IntBuffer dataBuffer;
+    private IntBuffer dataBuffer;
     /** The number of blocks assigned to the uniform buffer. */
-    int blockCount;
+    private int blockCount;
     /** The active uniform block for this buffer. */
-    int blockPntr;
+    private int blockPntr;
     /** The capacity of a single block in the uniform buffer. */
-    int blockSize;
+    private int blockSize;
     /** The alignment stride of a single block. */
-    int blockStride;
+    private int blockStride;
     /** The bind point associated with this buffer (default 0) */
-    int bindpoint;
+    private int bindpoint;
+    /** Boolean tracks whether this buffer is bound (unreliable because OpenGL) */
+    private boolean isbound  = false;
     /** An underlying byte buffer to manage the uniform data */
-    ByteBuffer byteBuffer;
+    private ByteBuffer byteBuffer;
     /** The draw type for this buffer */
-    int drawtype;
+    private int drawtype;
     /** Whether the byte buffer flushes automatically */
-    boolean autoflush;
+    private boolean autoflush;
     /** Whether the byte buffer must be flushed to the graphics card */
-    boolean dirty;
+    private boolean dirty;
     /** A mapping of struct names to their std140 offsets */
-    HashMap<String, Integer> offsets;
+    private HashMap<String, Integer> offsets;
     /** The decriptive buffer name */
-    String name;
+    private String name;
+    /** Temporary data */
+    private final float[] tempdata = new float[16];
+    /** Whether this class has been initialized, for finalizer */
+    private boolean initialized;
 
+    /**
+     * Creates an uninitialized uniform buffer.
+     *
+     * You must initialize the uniform buffer to allocate memory.
+     */
     public CUUniformBuffer() {
         dataBuffer = BufferUtils.newIntBuffer(1);
         dataBuffer.put(0, 0);
@@ -50,10 +65,28 @@ public class CUUniformBuffer implements Disposable {
         byteBuffer = null;
         drawtype = GL30.GL_STREAM_DRAW;
         offsets = new HashMap<>();
+        initialized = true;
     }
 
+    /**
+     * Initializes this uniform buffer to support multiple blocks of the given capacity.
+     *
+     * The block capacity is measured in bytes.  In std140 format, all scalars are
+     * 4 bytes, vectors are 8 or 16 bytes, and matrices are treated as an array of
+     * 8 or 16 byte column vectors.
+     *
+     * Keep in mind that uniform buffer blocks must be aligned, and so this may take
+     * significantly more memory than the number of blocks times the capacity. If the
+     * graphics card cannot support that many blocks, this method will return false.
+     *
+     * @param capacity  The block capacity in bytes
+     * @param blocks    The number of blocks to support
+     *
+     * @return true if initialization was successful.
+     */
     public CUUniformBuffer(int capacity, int blocks) {
         this();
+        assert blocks != 0 : "Block count must be nonzero";
         GL30 gl = Gdx.gl30;
         blockCount = blocks;
         blockSize = capacity;
@@ -68,43 +101,42 @@ public class CUUniformBuffer implements Disposable {
         // Quit if the memory request is too high
         gl.glGetIntegerv(GL30.GL_MAX_UNIFORM_BLOCK_SIZE, value);
         if (blockStride > value.get(0)) {
-//            CUAssertLog(false,"Capacity exceeds maximum value of %d bytes",value);
-            blockCount = 0;
             blockSize = 0;
             blockStride = 0;
-//            return false;
+            blockCount = 0;
+            throw new GdxRuntimeException(String.format("Capacity exceeds maximum value of %d bytes",value));
         }
 
         int error;
         gl.glGenBuffers(1, dataBuffer);
-        if (dataBuffer == null) {
-            error = gl.glGetError();
-//            CULogError("Could not create uniform buffer. %s", gl_error_name(error).c_str());
-//            return false;
+        if (dataBuffer.get(0) == 0) {
+            error = Gdx.gl30.glGetError();
+            throw new GdxRuntimeException(String.format("Could not create uniform buffer. %s", CUGLDebug.errorName(error)));
         }
 
         byteBuffer = BufferUtils.newUnsafeByteBuffer(blockStride * blockCount);
+
         gl.glBindBuffer(GL30.GL_UNIFORM_BUFFER, dataBuffer.get(0));
         gl.glBufferData(GL30.GL_UNIFORM_BUFFER, blockStride * blockCount, null, drawtype);
         error = gl.glGetError();
-        if (error != GL30.GL_NO_ERROR) {
+        if (error != 0) {
             gl.glDeleteBuffers(1, dataBuffer);
             dataBuffer.put(0, 0);
-//            CULogError("Could not allocate memory for uniform buffer. %s",
-//                    gl_error_name(error).c_str());
-//            return false;
+            throw new GdxRuntimeException("Could not create uniform buffer");
         }
 
         gl.glBindBuffer(GL30.GL_UNIFORM_BUFFER, 0);
         System.out.println(byteBuffer);
 
         offsets = new HashMap<>();
-//        return true;
     }
 
     @Override
     protected void finalize() throws Throwable {
-//        dispose();
+        if (initialized) {
+            dispose();
+            super.finalize();
+        }
     }
 
     public void dispose () {
@@ -129,6 +161,7 @@ public class CUUniformBuffer implements Disposable {
         bindpoint = 0;
     }
 
+    //region Binding
     /**
      * Returns the OpenGL buffer for this uniform buffer.
      *
@@ -179,22 +212,13 @@ public class CUUniformBuffer implements Disposable {
      * However, if the buffer is bound to another bind
      * point, then it will be unbound from that point.
      *
-     * @param point The bind point for for this uniform buffer.
+     * @param point The bindpoint for this uniform buffer.
      */
     public void setBindPoint(int point) {
         GL30 gl = Gdx.gl30;
-        IntBuffer bound = BufferUtils.newIntBuffer(1);
-        // Don't have glGetIntegeri_v method, replace with this for now
-        // But I don't think it works because this target could be overriden w multiple uniform buffers,
-        // Only works if it is the active buffer,
-        // also doesn't check if it is bound to the bindpoint.
-        // for now, maybe no matter what just unbind when u set a new bind point
-//        gl.glGetIntegeri_v(GL30.GL_UNIFORM_BUFFER_BINDING,_bindpoint, bound);
-//        gl.glGetIntegerv(GL30.GL_UNIFORM_BUFFER_BINDING, bound);
-//        if (bound == _dataBuffer) {
-//            gl.glBindBufferBase(GL30.GL_UNIFORM_BUFFER, _bindpoint, 0);
-//        }
-        gl.glBindBufferBase(GL30.GL_UNIFORM_BUFFER, bindpoint, 0);
+        if (isbound) {
+            gl.glBindBufferBase(GL30.GL_UNIFORM_BUFFER, bindpoint, 0);
+        }
         bindpoint = point;
     }
 
@@ -241,17 +265,10 @@ public class CUUniformBuffer implements Disposable {
      */
     public void unbind() {
         GL30 gl = Gdx.gl30;
-        IntBuffer bound = BufferUtils.newIntBuffer(1);
-        // Don't have glGetIntegeri_v method, replace with this for now
-        // But I don't think it works because this target could be overriden w multiple uniform buffers,
-        // Only works if it is the active buffer
-        // for now, maybe no matter what just unbind
-//        gl.glGetIntegeri_v(GL30.GL_UNIFORM_BUFFER_BINDING,_bindpoint, bound);
-//        gl.glGetIntegerv(GL30.GL_UNIFORM_BUFFER_BINDING, bound);
-//        if (bound == _dataBuffer) {
-//            gl.glBindBufferBase(GL30.GL_UNIFORM_BUFFER, _bindpoint, 0);
-//        }
-        gl.glBindBufferBase(GL30.GL_UNIFORM_BUFFER, bindpoint, 0);
+        if (isbound) {
+            gl.glBindBufferBase(GL30.GL_UNIFORM_BUFFER, bindpoint, 0);
+            isbound = false;
+        }
     }
 
     /**
@@ -266,7 +283,7 @@ public class CUUniformBuffer implements Disposable {
      * This method does not bind the uniform block to a bind point. That must be
      * done with a call to {@link #bind}.
      *
-     * This call is reentrant.  If can be safely called multiple times.
+     * This call is reentrant. If can be safely called multiple times.
      */
     public void activate() {
         GL30 gl = Gdx.gl30;
@@ -297,20 +314,16 @@ public class CUUniformBuffer implements Disposable {
         }
     }
 
-//    /**
-//     * Returns true if this uniform buffer is currently bound.
-//     *
-//     * A uniform buffer is bound if it is attached to a bind point. That means that
-//     * the shader will pull its data for that bind point from this buffer. A uniform
-//     * block can be bound without being active.
-//     *
-//     * @return true if this uniform block is currently bound.
-//     */
-//    bool UniformBuffer::isBound() const {
-//        GLint bound;
-//        glGetIntegeri_v(GL_UNIFORM_BUFFER_BINDING,_bindpoint,&bound);
-//        return bound == _dataBuffer;
-//    }
+    /**
+     * Returns true if this uniform buffer is currently bound.
+     *
+     * A uniform buffer is bound if it is attached to a bind point. That means that
+     * the shader will pull its data for that bind point from this buffer. A uniform
+     * block can be bound without being active.
+     *
+     * @return true if this uniform block is currently bound.
+     */
+    boolean isBound() { return isbound; }
 
     /**
      * Returns true if this uniform buffer is currently active.
@@ -353,7 +366,6 @@ public class CUUniformBuffer implements Disposable {
      * @param block The active uniform block in this buffer.
      */
     public void setBlock(int block) {
-//        CUAssertLog(isBound(), "Buffer is not bound.");
         GL30 gl = Gdx.gl30;
         if (blockPntr != block) {
             blockPntr = block;
@@ -371,12 +383,16 @@ public class CUUniformBuffer implements Disposable {
      * buffer.
      */
     public void flush() {
+        assert isActive() : "Buffer is not active.";
         GL30 gl = Gdx.gl30;
-        // CUAssertLog(isActive(), "Buffer is not active."); // Problems on android emulator for now
         gl.glBufferData(GL30.GL_UNIFORM_BUFFER, blockStride * blockCount, byteBuffer, drawtype);
         dirty = false;
     }
+    //endregion
 
+    //region Data Offsets
+
+    public static final int INVALID_OFFSET = -1;
     /**
      * Defines the byte offset of the given buffer variable.
      *
@@ -414,7 +430,7 @@ public class CUUniformBuffer implements Disposable {
     public int getOffset(String name) {
         Integer elt = offsets.get(name);
         if (elt == null) {
-            return -1; // Invalid offset
+            return INVALID_OFFSET;
         }
         return elt;
     }
@@ -438,6 +454,661 @@ public class CUUniformBuffer implements Disposable {
         return result;
     }
 
+    //endregion
+
+    //region Uniforms
+    /**
+     * Sets the given uniform variable to a vector value.
+     *
+     * This method will write the vector as 2*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param vec       The value for the uniform
+     */
+    public void setUniform(int block, int offset, Vector2 vec) {
+        tempdata[0] = vec.x;
+        tempdata[1] = vec.y;
+        setUniformfv(block,offset,2,tempdata,0);
+    }
+
+    /**
+     * Sets the given uniform variable to a vector value.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will write the vector
+     * as 2*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param vec   The value for the uniform
+     */
+    public void setUniform(int block, String name, Vector2 vec) {
+        tempdata[0] = vec.x;
+        tempdata[1] = vec.y;
+        setUniformfv(block,name,2,tempdata,0);
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a vector.
+     *
+     * This method will read the vector as 2*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param vec       The vector to store the result
+     *
+     * @return true if it can access the given uniform variable as a vector.
+     */
+    public boolean getUniform(int block, int offset, Vector2 vec) {
+        if (getUniformfv(block,offset,2,tempdata,0)) {
+            vec.set( tempdata[0], tempdata[1] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a vector.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will read the vector
+     * as 2*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param vec   The vector to store the result
+     *
+     * @return true if it can access the given uniform variable as a vector.
+     */
+    public boolean getUniform(int block, String name, Vector2 vec) {
+        if (getUniformfv(block,name,2,tempdata,0)) {
+            vec.set( tempdata[0], tempdata[1] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Sets the given uniform variable to a vector value.
+     *
+     * This method will write the vector as 3*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param vec       The value for the uniform
+     */
+    public void setUniform(int block, int offset, Vector3 vec) {
+        tempdata[0] = vec.x;
+        tempdata[1] = vec.y;
+        tempdata[2] = vec.z;
+        setUniformfv(block,offset,3,tempdata,0);
+    }
+
+    /**
+     * Sets the given uniform variable to a vector value.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will write the vector
+     * as 3*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param vec   The value for the uniform
+     */
+    public void setUniform(int block, String name, Vector3 vec) {
+        tempdata[0] = vec.x;
+        tempdata[1] = vec.y;
+        tempdata[2] = vec.z;
+        setUniformfv(block,name,3,tempdata,0);
+
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a vector.
+     *
+     * This method will read the vector as 3*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param vec       The vector to store the result
+     *
+     * @return true if it can access the given uniform variable as a vector.
+     */
+    public boolean getUniform(int block, int offset, Vector3 vec) {
+        if (getUniformfv(block, offset,3, tempdata,0)) {
+            vec.set( tempdata[0], tempdata[1], tempdata[2] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a vector.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will read the vector
+     * as 3*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param vec   The vector to store the result
+     *
+     * @return true if it can access the given uniform variable as a vector.
+     */
+    public boolean getUniform(int block, String name, Vector3 vec) {
+        if (getUniformfv(block, name, 3, tempdata,0)) {
+            vec.set( tempdata[0], tempdata[1], tempdata[2] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Sets the given uniform variable to a color value.
+     *
+     * This method will write the color as 4*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param color     The value for the uniform
+     */
+    public void setUniform(int block, int offset, Color color) {
+        tempdata[0] = color.r;
+        tempdata[1] = color.g;
+        tempdata[2] = color.b;
+        tempdata[3] = color.a;
+        setUniformfv(block, offset, 4, tempdata,0);
+    }
+
+    /**
+     * Sets the given uniform variable to a color value.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will write the color
+     * as 4*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param color The value for the uniform
+     */
+    public void setUniform(int block, String name, Color color) {
+        tempdata[0] = color.r;
+        tempdata[1] = color.g;
+        tempdata[2] = color.b;
+        tempdata[3] = color.a;
+        setUniformfv(block, name, 4, tempdata,0);
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a color.
+     *
+     * This method will read the color as 4*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param color     The color to store the result
+     *
+     * @return true if it can access the given uniform variable as a color.
+     */
+    public boolean getUniform(int block, int offset, Color color) {
+        if (getUniformfv(block, offset, 4, tempdata,0)) {
+            color.set( tempdata[0], tempdata[1], tempdata[2], tempdata[3] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a color.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will read the color
+     * as 4*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param color The color to store the result
+     *
+     * @return true if it can access the given uniform variable as a color.
+     */
+    public boolean getUniform(int block, String name, Color color) {
+        if (getUniformfv(block, name, 4, tempdata,0)) {
+            color.set( tempdata[0], tempdata[1], tempdata[2], tempdata[3] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Sets the given uniform variable to a matrix value.
+     *
+     * This method will write the matrix as 16*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param mat       The value for the uniform
+     */
+    public void setUniform(int block, int offset, Matrix4 mat) {
+        setUniformfv(block, offset, 16, mat.val,0);
+    }
+
+    /**
+     * Sets the given uniform variable to a matrix value.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will write the matrix
+     * as 16*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param mat   The value for the uniform
+     */
+    public void setUniform(int block, String name, Matrix4 mat) {
+        setUniformfv(block, name, 16, mat.val, 0);
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a matrix.
+     *
+     * This method will read the matrix as 16*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param mat       The matrix to store the result
+     *
+     * @return true if it can access the given uniform variable as a matrix.
+     */
+    public boolean getUniform(int block, int offset, Matrix4 mat) {
+        return (getUniformfv(block, offset, 16, mat.val, 0));
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a matrix.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will read the matrix
+     * as 16*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param mat   The matrix to store the result
+     *
+     * @return true if it can access the given uniform variable as a matrix.
+     */
+    public boolean getUniform(int block, String name, Matrix4 mat) {
+        return (getUniformfv(block, name, 16, mat.val, 0));
+    }
+
+    /**
+     * Sets the given uniform variable to an affine transform.
+     *
+     * Affine transforms are passed to a uniform block as a 4x3 matrix on
+     * homogenous coordinates. That is because the columns must be 4*sizeof(float)
+     * bytes for alignment reasons. The buffer must have 12*sizeof(float) bytes
+     * available for this write.
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param mat       The value for the uniform
+     */
+    public void setUniform(int block, int offset, Affine2 mat) {
+        float[] data = new float[12];
+        data[0] = mat.m00;
+        data[1] = mat.m10;
+        data[4] = mat.m01;
+        data[5] = mat.m11;
+        data[8] = mat.m02;
+        data[9] = mat.m12;
+        data[10] = 1;
+        setUniformfv(block, offset, 12, data, 0);
+    }
+
+    /**
+     * Sets the given uniform variable to an affine transform.
+     *
+     * Affine transforms are passed to a uniform block as a 4x3 matrix on
+     * homogenous coordinates. That is because the columns must be 4*sizeof(float)
+     * bytes for alignment reasons. The buffer must have 12*sizeof(float) bytes
+     * available for this write.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}.  Values set by this method will not
+     * be sent to the graphics card until the buffer is flushed. However, if the
+     * buffer is active and auto-flush is turned on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param mat   The value for the uniform
+     */
+    public void setUniform(int block, String name, Affine2 mat) {
+        float[] data = new float[12];
+        data[0] = mat.m00;
+        data[1] = mat.m10;
+        data[4] = mat.m01;
+        data[5] = mat.m11;
+        data[8] = mat.m02;
+        data[9] = mat.m12;
+        data[10] = 1;
+        setUniformfv(block, name, 12, data, 0);
+
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as an affine transform.
+     *
+     * Affine transforms are read from a uniform block as a 4x3 matrix on
+     * homogenous coordinates. That is because the columns must be 4*sizeof(float)
+     * bytes for alignment reasons. The buffer must have 12*sizeof(float) bytes
+     * available for this read.
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param mat       The matrix to store the result
+     *
+     * @return true if it can access the given uniform variable as an affine transform.
+     */
+    public boolean getUniform(int block, int offset, Affine2 mat) {
+        float[] data = new float[12];
+        if (getUniformfv(block, offset, 12, data, 0)) {
+            mat.m00 = data[0];
+            mat.m10 = data[1];
+            mat.m01 = data[4];
+            mat.m11 = data[5];
+            mat.m02 = data[8];
+            mat.m12 = data[9];
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as an affine transform.
+     *
+     * Affine transforms are read from a uniform block as a 4x3 matrix on
+     * homogenous coordinates. That is because the columns must be 4*sizeof(float)
+     * bytes for alignment reasons. The buffer must have 12*sizeof(float) bytes
+     * available for this read.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. The buffer does not have to be active
+     * to call this method.  If it is not active and there are pending changes to
+     * this uniform variable, this method will read those changes and not the current
+     * value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param name      The name of the uniform variable
+     * @param mat       The matrix to store the result
+     *
+     * @return true if it can access the given uniform variable as an affine transform.
+     */
+    public boolean getUniform(int block, String name, Affine2 mat) {
+        float[] data = new float[12];
+        if (getUniformfv(block, name, 12, data, 0)) {
+            mat.m00 = data[0];
+            mat.m10 = data[1];
+            mat.m01 = data[4];
+            mat.m11 = data[5];
+            mat.m02 = data[8];
+            mat.m12 = data[9];
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Sets the given uniform variable to a quaternion.
+     *
+     * This method will write the quaternion as 4*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param quat      The value for the uniform
+     */
+    public void setUniform(int block, int offset, Quaternion quat) {
+        tempdata[0] = quat.x;
+        tempdata[1] = quat.y;
+        tempdata[2] = quat.z;
+        tempdata[3] = quat.w;
+        setUniformfv(block, offset, 4, tempdata,0);
+    }
+
+
+    /**
+     * Sets the given uniform variable to a quaternion
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will write the quaternion
+     * as 4*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param quat  The value for the uniform
+     */
+    public void setUniform(int block, String name, Quaternion quat) {
+        tempdata[0] = quat.x;
+        tempdata[1] = quat.y;
+        tempdata[2] = quat.z;
+        tempdata[3] = quat.w;
+        setUniformfv(block, name, 4, tempdata,0);
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a quaternion.
+     *
+     * This method will read the quaternion as 4*sizeof(float) bytes to the appropriate
+     * buffer location (and the buffer must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param quat      The quaternion to store the result
+     *
+     * @return true if it can access the given uniform variable as a quaternion.
+     */
+    public boolean getUniform(int block, int offset, Quaternion quat) {
+        if (getUniformfv(block, offset, 4, tempdata,0)) {
+            quat.set( tempdata[0], tempdata[1], tempdata[2], tempdata[3] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Returns true if it can access the given uniform variable as a quaternion.
+     *
+     * This method requires that the uniform name be previously bound to a byte
+     * offset with the call {@link #setOffset}. This method will read the quaternion
+     * as 4*sizeof(float) bytes to the appropriate buffer location (and the buffer
+     * must have the appropriate capacity).
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block The block in this uniform buffer to access
+     * @param name  The name of the uniform variable
+     * @param quat  The quaternion to store the result
+     *
+     * @return true if it can access the given uniform variable as a quaternion.
+     */
+    public boolean getUniformQuaternion(int block, String name, Quaternion quat) {
+        if (getUniformfv(block, name, 4, tempdata,0)) {
+            quat.set( tempdata[0], tempdata[1], tempdata[2], tempdata[3] );
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Sets the given buffer offset to an array of float values with a default
+     * offset of 0.
+     */
+    public void setUniformfv(int block, int offset, int size, float[] values) {
+        setUniformfv(block, offset, size, values, 0);
+    }
+
     /**
      * Sets the given buffer offset to an array of float values
      *
@@ -455,7 +1126,7 @@ public class CUUniformBuffer implements Disposable {
      * @param size      The number of values to write to the buffer
      * @param values    The values to write
      */
-    public void setUniformfv(int block, int offset, int size, float[] values) {
+    public void setUniformfv(int block, int offset, int size, float[] values, int srcOffset) {
         assert block < blockCount : "Block " + block + " is invalid.";
         assert offset < blockSize : "Offset " + offset + " is invalid.";
         GL30 gl = Gdx.gl30;
@@ -463,7 +1134,7 @@ public class CUUniformBuffer implements Disposable {
             int pos = byteBuffer.position();
             int position = block* blockStride +offset;
             ((Buffer) byteBuffer).position(position);
-            BufferUtils.copy(values, 0, size, byteBuffer);
+            BufferUtils.copy(values, srcOffset, size, byteBuffer);
             ((Buffer) byteBuffer).position(pos);
             if (autoflush && isActive()) {
                 gl.glBufferSubData(GL30.GL_UNIFORM_BUFFER, position, size * Float.SIZE, byteBuffer);
@@ -481,13 +1152,215 @@ public class CUUniformBuffer implements Disposable {
                 final int pos = byteBuffer.position();
                 int position = bl* blockStride +offset;
                 ((Buffer) byteBuffer).position(position);
-                BufferUtils.copy(values, 0, size, byteBuffer);
+                BufferUtils.copy(values, srcOffset, size, byteBuffer);
                 ((Buffer) byteBuffer).position(pos);
                 if (active) {
                     gl.glBufferSubData(GL30.GL_UNIFORM_BUFFER, position, size * Float.SIZE, byteBuffer);
                 }
             }
         }
+    }
+
+    /**
+     * Sets the given buffer location to an array of float values
+     *
+     * This method requires that the uniform name be previously bound to a byte offset
+     * with the call {@link #setOffset}. Values set by this method will not be sent to
+     * the graphics card until the buffer is flushed. However, if the buffer is active
+     * and auto-flush is turned on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param name      The name of the uniform variable
+     * @param size      The number of values to write to the buffer
+     * @param values    The values to write
+     * @param srcoff    The offset in the source array
+     */
+    public void setUniformfv(int block, String name, int size, float[] values, int srcoff) {
+        int offset = getOffset(name);
+        if (offset != INVALID_OFFSET) {
+            setUniformfv(block,offset,size,values,srcoff);
+        }
+    }
+
+    /**
+     * Returns true if it can access the given buffer offset as an array of floats
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param size      The available size of the value array
+     * @param values    The array to receive the values
+     * @param dstoff    The offset in the destination array
+     *
+     * @return true if data was successfully read into values
+     */
+    public boolean getUniformfv(int block, int offset, int size, float[] values, int dstoff) {
+        if (block >= blockCount || offset > blockSize) {
+            return false;
+        }
+        int position = (block*blockStride+offset)/4;
+        FloatBuffer floater = byteBuffer.asFloatBuffer();
+        floater.position(position);
+        floater.get(values,dstoff,size);
+        byteBuffer.position( 0 );
+        return true;
+    }
+
+    /**
+     * Returns true if it can access the given buffer location as an array of floats
+     *
+     * This method requires that the uniform name be previously bound to a byte offset
+     * with the call {@link #setOffset}. The buffer does not have to be active to call
+     * this method. If it is not active and there are pending changes to this uniform
+     * variable, this method will read those changes and not the current value in the
+     * graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param name      The name of the uniform variable
+     * @param size      The available size of the value array
+     * @param values    The array to receive the values
+     * @param dstoff    The offset in the destination array
+     *
+     * @return true if data was successfully read into values
+     */
+    public boolean getUniformfv(int block, String name, int size, float[] values, int dstoff) {
+        int offset = getOffset(name);
+        if (offset != INVALID_OFFSET) {
+            return getUniformfv(block,offset,size,values,dstoff);
+        }
+        return false;
+    }
+
+    /**
+     * Sets the given buffer offset to an array of integer values
+     *
+     * Values set by this method will not be sent to the graphics card until the
+     * buffer is flushed. However, if the buffer is active and auto-flush is turned
+     * on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param size      The number of values to write to the buffer
+     * @param values    The values to write
+     * @param srcoff    The offset in the source array
+     */
+    public void setUniformiv(int block, int offset, int size, int[] values, int srcoff) {
+        assert block < blockCount : String.format("Block %d is invalid.",block);
+        assert offset < blockSize : String.format("Offset %d is invalid.",offset);
+        if (block >= 0) {
+            int position = block*blockStride+offset;
+            byteBuffer.position(position);
+            BufferUtils.copy( values, srcoff, size, byteBuffer );
+            byteBuffer.position( 0 );
+            if (autoflush && isActive()) {
+                Gdx.gl30.glBufferSubData(GL30.GL_UNIFORM_BUFFER, position, size*4, byteBuffer);
+            } else {
+                dirty = true;
+            }
+        } else {
+            for(int bb = 0; bb < blockCount; bb++) {
+                int position = bb*blockStride+offset;
+                byteBuffer.position(position);
+                BufferUtils.copy( values, srcoff, size, byteBuffer );
+            }
+            byteBuffer.position( 0 );
+            if (autoflush && isActive()) {
+                Gdx.gl30.glBufferSubData(GL30.GL_UNIFORM_BUFFER, 0, size*4, byteBuffer);
+            } else {
+                dirty = true;
+            }
+        }
+    }
+
+    /**
+     * Sets the given buffer location to an array of integer values
+     *
+     * This method requires that the uniform name be previously bound to a byte offset
+     * with the call {@link #setOffset}. Values set by this method will not be sent to
+     * the graphics card until the buffer is flushed. However, if the buffer is active
+     * and auto-flush is turned on, it will be written immediately.
+     *
+     * If block is -1, it sets this value in every block in this uniform buffer.
+     * This is a potentially expensive operation if the block is active.  For
+     * mass changes, it is better to deactivate the buffer, and have them apply
+     * once the buffer is reactivated.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param name      The name of the uniform variable
+     * @param size      The number of values to write to the buffer
+     * @param values    The values to write
+     * @param srcoff    The offset in the source array
+     */
+    public void setUniformiv(int block, String name, int size, int[] values, int srcoff) {
+        int offset = getOffset(name);
+        if (offset != INVALID_OFFSET) {
+            setUniformiv(block,offset,size,values,srcoff);
+        }
+    }
+
+    /**
+     * Returns true if it can access the given buffer offset as an array of integers
+     *
+     * The buffer does not have to be active to call this method.  If it is not
+     * active and there are pending changes to this uniform variable, this method
+     * will read those changes and not the current value in the graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param offset    The offset within the block
+     * @param size      The available size of the value array
+     * @param values    The array to receive the values
+     * @param dstoff    The offset in the destination array
+     *
+     * @return true if data was successfully read into values
+     */
+    public boolean getUniformiv(int block, int offset, int size, int[] values, int dstoff) {
+        if (block >= blockCount || offset > blockSize) {
+            return false;
+        }
+        int position = (block*blockStride+offset)/4;
+        IntBuffer integer = byteBuffer.asIntBuffer();
+        integer.position(position);
+        integer.get(values,dstoff,size);
+        byteBuffer.position( 0 );
+        return true;
+    }
+
+    /**
+     * Returns true if it can access the given buffer location as an array of integers
+     *
+     * This method requires that the uniform name be previously bound to a byte offset
+     * with the call {@link #setOffset}. The buffer does not have to be active to call
+     * this method. If it is not active and there are pending changes to this uniform
+     * variable, this method will read those changes and not the current value in the
+     * graphics card.
+     *
+     * @param block     The block in this uniform buffer to access
+     * @param name      The name of the uniform variable
+     * @param size      The available size of the value array
+     * @param values    The array to receive the values
+     * @param dstoff    The offset in the destination array
+     *
+     * @return true if data was successfully read into values
+     */
+    public boolean getUniformiv(int block, String name, int size, int[] values, int dstoff) {
+        int offset = getOffset(name);
+        if (offset != INVALID_OFFSET) {
+            return getUniformiv(block,offset,size,values,dstoff);
+        }
+        return false;
     }
 }
 

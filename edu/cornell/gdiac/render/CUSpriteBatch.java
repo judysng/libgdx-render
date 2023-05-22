@@ -9,9 +9,9 @@ import com.badlogic.gdx.graphics.g2d.*;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.math.*;
 
-import com.badlogic.gdx.utils.Pool;
-import com.badlogic.gdx.utils.PooledLinkedList;
+import com.badlogic.gdx.utils.*;
 import edu.cornell.gdiac.math.*;
+import edu.cornell.gdiac.render.shaders.SpriteShader;
 
 /** This module provides one-stop shopping for basic 2d graphics.  Despite the
  * name, it is also capable of drawing solid shapes, as well as wireframes.
@@ -23,89 +23,81 @@ import edu.cornell.gdiac.math.*;
  */
 public class CUSpriteBatch implements Batch {
 
+    /** Array to hold vertex data **/
     final float[] vertices;
-
+    /** Number of numbers in each vertex */
+    final int numsInVertex;
     /** Array to hold index data **/
-    short[] indxData;
-
+    final short[] indxData;
+    /** Index into vertices for where to add the next float */
     int idx = 0;
-
+    /** Whether we are currently drawing */
     boolean drawing = false;
+    /** The projection matrix */
     private final Matrix4 projectionMatrix = new Matrix4();
 
+    /** The shader */
     private ShaderProgram shader;
+    /** Whether this sprite batch owns the shader */
     private boolean ownsShader;
+    /** Color to tint the sprites */
     private final Color color = new Color(1, 1, 1, 1);
+    /** The packed color */
     float colorPacked = Color.WHITE_FLOAT_BITS;
 
     /** The number of vertices drawn in this pass (so far) */
     public int vertTotal;
-
     /** Number of render calls since the last {@link #begin()}. **/
     public int renderCalls = 0;
-
     /** Number of rendering calls, ever. Will not be reset unless set manually. **/
     public int totalRenderCalls = 0;
 
-    /** The maximum number of sprites rendered in one batch so far. **/
-    public int maxSpritesInBatch = 0;
-
-    /** The active gradient */
-    private CUGradient gradient;
-
-    /** The active scissor mask */
-    private CUScissor scissor;
-
+    /** The uniform buffer for this sprite batch */
+    private CUUniformBuffer unifbuff;
     /** The vertex buffer for this sprite batch */
     private CUVertexBuffer vertbuff;
-
     /** The maximum number of vertices **/
     private int vertMax;
-
     /** The number of vertices in the current mesh **/
     private int vertSize;
-
     /** The maximum number of indices **/
     private int indxMax;
-
     /** The number of indices in the current mesh **/
     private int indxSize;
 
-    /** The uniform buffer for this sprite batch */
-    private CUUniformBuffer unifbuff;
-
     /** The active drawing context */
     private Context context;
-
     /** Whether the current context has been used. */
     private boolean inflight;
-
     /** The drawing context history */
     private PooledLinkedList<Context> history;
 
-    /** Number of numbers in each vertex */
-    private int numsInVertex;
-
+    /** The active gradient */
+    private CUGradient gradient;
+    /** The active scissor mask */
+    private CUScissor scissor;
 
     /** Cache for making the affine transform in draw methods */
-    private Affine2 transformCache;
+    private final Affine2 transformCache;
     /** Cache for the rect poly in draw methods */
-    private Poly2 polyCache;
+    private final Poly2 polyCache;
     /** Cache for vertices in the polyCache */
-    private float[] verticesCache;
+    private final float[] verticesCache;
     /** Cache for making the indices in the polyCache */
-    private short[] indicesCache;
+    private final short[] indicesCache;
     /** Cache for uniform data */
-    private float[] uniformBlockData;
+    private final float[] uniformBlockData;
+    /** Cache for chunkify offsets */
+    private final IntIntMap offsets;
 
     /** Constructs a new SpriteBatch with a size of 1000, one buffer, and the default shader.
-     * @see SpriteBatch#SpriteBatch(int, ShaderProgram) */
+     * @see CUSpriteBatch#CUSpriteBatch(int, CUShader) */
     public CUSpriteBatch () {
         this(1000, null);
     }
 
     /** Constructs a SpriteBatch with one buffer and the default shader.
-     * @see SpriteBatch#SpriteBatch(int, ShaderProgram) */
+     * @see CUSpriteBatch#CUSpriteBatch(int, CUShader) */
     public CUSpriteBatch (int size) {
         this(size, null);
     }
@@ -120,7 +112,7 @@ public class CUSpriteBatch implements Batch {
      * respect to the current screen resolution.
      * <p>
      * The defaultShader specifies the shader to use. Note that the names for uniforms for this default shader are different than
-     * the ones expect for shaders set with {@link #setShader(ShaderProgram)}. See {@link #createDefaultShader()}.
+     * the ones expect for shaders set with {@link #setShader(ShaderProgram)}.
      * @param size The max number of sprites in a single batch. Max of 8191.
      * @param defaultShader The default shader to use. This is not owned by the SpriteBatch and must be disposed separately. */
     public CUSpriteBatch (int size, CUShader defaultShader, int numsInVertex) {
@@ -129,45 +121,31 @@ public class CUSpriteBatch implements Batch {
 
         projectionMatrix.setToOrtho2D(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
 
-        vertices = new float[size * numsInVertex];
-        this.numsInVertex = numsInVertex;
-
-        transformCache = new Affine2();
-        verticesCache = new float[8];
-        indicesCache = new short[8];
-        polyCache = new Poly2(verticesCache, indicesCache);
-
         if (defaultShader == null) {
-            if (numsInVertex == 7) {
-                shader = create7Shader();
-            } else {
-                shader = createDefaultShader();
-            }
+            shader = SpriteShader.createShader(numsInVertex);
             ownsShader = true;
         } else
             shader = defaultShader;
 
         // Set up data arrays
         vertMax = size;
+        this.numsInVertex = numsInVertex;
+        vertices = new float[size * numsInVertex];
+
         indxMax = size*6;
 		indxData = new short[indxMax];
 
-        int posOffset = CUSpriteVertex.positionOffset(2);
-        int colOffset = CUSpriteVertex.colorOffset(4);
-        int texOffset = CUSpriteVertex.texcoordOffset(2);
-        int gradOffset = CUSpriteVertex.gradcoordOffset(2);
         if (numsInVertex == 7) {
-            vertbuff = new CUVertexBuffer(posOffset + colOffset + texOffset + gradOffset, vertMax * 4, indxMax);
-            vertbuff.setupAttribute(CUShader.GRADCOORD_ATTRIBUTE + "0", 2, GL30.GL_FLOAT, false, posOffset + colOffset + texOffset);
+            vertbuff = new CUVertexBuffer(SpriteShader.ATTRIBUTE_OFFSET[4], vertMax * 4, indxMax);
+            vertbuff.setupAttribute(CUShader.GRADCOORD_ATTRIBUTE + "0", 2, GL30.GL_FLOAT, false, SpriteShader.ATTRIBUTE_OFFSET[3]);
         } else {
-            vertbuff = new CUVertexBuffer(posOffset + colOffset + texOffset, vertMax * 4, indxMax);
+            vertbuff = new CUVertexBuffer(SpriteShader.ATTRIBUTE_OFFSET[3], vertMax * 4, indxMax);
         }
-        vertbuff.setupAttribute(ShaderProgram.POSITION_ATTRIBUTE, 2, GL30.GL_FLOAT, false, 0);
-        vertbuff.setupAttribute(ShaderProgram.COLOR_ATTRIBUTE, 4, GL30.GL_UNSIGNED_BYTE, true, posOffset);
-        vertbuff.setupAttribute(ShaderProgram.TEXCOORD_ATTRIBUTE + "0", 2, GL30.GL_FLOAT, false, posOffset + colOffset);
+        vertbuff.setupAttribute(ShaderProgram.POSITION_ATTRIBUTE, 2, GL30.GL_FLOAT, false, SpriteShader.ATTRIBUTE_OFFSET[0]);
+        vertbuff.setupAttribute(ShaderProgram.COLOR_ATTRIBUTE, 4, GL30.GL_UNSIGNED_BYTE, true, SpriteShader.ATTRIBUTE_OFFSET[1]);
+        vertbuff.setupAttribute(ShaderProgram.TEXCOORD_ATTRIBUTE + "0", 2, GL30.GL_FLOAT, false, SpriteShader.ATTRIBUTE_OFFSET[2]);
         vertbuff.attach(shader);
 
-        // size/4 because 1/16 of vertex size
         unifbuff = new CUUniformBuffer(40 * Float.SIZE, size/4);
         // Layout std140 format
         unifbuff.setOffset("scMatrix", 0);
@@ -179,185 +157,27 @@ public class CUSpriteBatch implements Batch {
         unifbuff.setOffset("gdExtent", 144);
         unifbuff.setOffset("gdRadius", 152);
         unifbuff.setOffset("gdFeathr", 156);
-        ((CUShader)shader).setUniformBlock("uContext",unifbuff);
+        ((CUShader)shader).setUniformBlock(SpriteShader.CONTEXT_UNIFORM,unifbuff);
         uniformBlockData = new float[40];
 
         scissor = null;
         gradient = null;
         context = new Context();
         context.dirty = DIRTY_ALL_VALS;
-        history = new PooledLinkedList<Context>(size);
+        history = new PooledLinkedList<>(size);
+
+        transformCache = new Affine2();
+        verticesCache = new float[8];
+        indicesCache = new short[8];
+        polyCache = new Poly2(verticesCache, indicesCache);
+        offsets = new IntIntMap();
     }
 
-    /** Returns a new instance of the default shader used by SpriteBatch for GL2 when no shader is specified. */
-    static public CUShader createDefaultShader () {
-        String vertexShader = "attribute vec4 " + ShaderProgram.POSITION_ATTRIBUTE + ";\n" //
-                + "attribute vec4 " + ShaderProgram.COLOR_ATTRIBUTE + ";\n" //
-                + "attribute vec2 " + ShaderProgram.TEXCOORD_ATTRIBUTE + "0;\n" //
-                + "uniform mat4 u_projTrans;\n" //
-                + "varying vec4 v_color;\n" //
-                + "varying vec2 v_texCoords;\n" //
-                + "\n" //
-                + "void main()\n" //
-                + "{\n" //
-                + "   v_color = " + ShaderProgram.COLOR_ATTRIBUTE + ";\n" //
-                + "   v_color.a = v_color.a * (255.0/254.0);\n" //
-                + "   v_texCoords = " + ShaderProgram.TEXCOORD_ATTRIBUTE + "0;\n" //
-                + "   gl_Position =  u_projTrans * " + ShaderProgram.POSITION_ATTRIBUTE + ";\n" //
-                + "}\n";
-        String fragmentShader = "#ifdef GL_ES\n" //
-                + "#define LOWP lowp\n" //
-                + "precision mediump float;\n" //
-                + "#else\n" //
-                + "#define LOWP \n" //
-                + "#endif\n" //
-                + "varying LOWP vec4 v_color;\n" //
-                + "varying vec2 v_texCoords;\n" //
-                + "uniform sampler2D u_texture;\n" //
-                + "uniform int uType;\n" //
-                + "uniform vec2 uBlur;\n" //
-                + "layout (std140) uniform uContext\n" //
-                + "{\n" //
-                + "	mat3 scMatrix;\n" //
-                + " vec2 scExtent;\n" //
-                + " vec2 scScale;\n" //
-                + "// GRADIENT UNIFORM\n" +
-                "// The gradient matrix\n" +
-                " mat3 gdMatrix;\n" +
-                "// The gradient inner color\n" +
-                " vec4 gdInner;\n" +
-                "// The gradient outer color\n" +
-                " vec4 gdOuter;\n" +
-                "// The gradient extent\n" +
-                " vec2 gdExtent;\n" +
-                "// The gradient radius\n" +
-                " float gdRadius;\n" +
-                "// The gradient feather\n" +
-                " float gdFeathr;"
-                + "};\n" //
-                + "\n" //
-                + "float scissormask(vec2 pt) {\n" //
-                + "  vec2 b = uBlur;\n" //
-                + "	 vec2 sc = (abs((scMatrix * vec3(pt,1.0)).xy) - scExtent);\n" //
-                + "  sc = vec2(0.5,0.5) - sc * scScale;\n" //
-                + "  return clamp(sc.x,0.0,1.0) * clamp(sc.y,0.0,1.0);\n" //
-                + "}\n" //
-                + "\n" //
-                + " float boxgradient(vec2 pt, vec2 ext, float radius, float feather) {\n" //
-                +	"    vec2 ext2 = ext - vec2(radius,radius);\n" //
-                +	"    vec2 dst = abs(pt) - ext2;\n" //
-                +	"    float m = min(max(dst.x,dst.y),0.0) + length(max(dst,0.0)) - radius;\n" //
-                +	"    return clamp((m + feather*0.5) / feather, 0.0, 1.0);\n" //
-                +	"}" //
-                + "\n" //
-                + "void main()\n"//
-                + "{\n" //
-                + "  vec4 result =  v_color * texture2D(u_texture, v_texCoords);\n" //
-                + "  float fType = float(uType);\n" //
-                + "  if (mod(fType, 4.0) >= 2.0) {\n" //
-                + "    vec2 pt = (gdMatrix * vec3(v_texCoords,1.0)).xy;\n" //
-                + "    float d = boxgradient(pt,gdExtent,gdRadius,gdFeathr);\n" //
-                + "    result = mix(gdInner,gdOuter,d)*texture2D(u_texture, v_texCoords);"
-                + "  } \n" //
-                + "  if (mod(fType, 8.0) >= 4.0) {\n" //
-                + "    // Apply scissor mask\n" //
-                + "    result.w *= scissormask(v_texCoords);\n" //
-                + "  }\n" //
-                + "  gl_FragColor = result; \n" //
-                + "}";
-
-        CUShader shader = new CUShader(vertexShader, fragmentShader);
-        if (!shader.isCompiled()) throw new IllegalArgumentException("Error compiling shader: " + shader.getLog());
-        return shader;
-    }
-
-    static public CUShader create7Shader () {
-        String vertexShader = "attribute vec4 " + ShaderProgram.POSITION_ATTRIBUTE + ";\n" //
-                + "attribute vec4 " + ShaderProgram.COLOR_ATTRIBUTE + ";\n" //
-                + "attribute vec2 " + ShaderProgram.TEXCOORD_ATTRIBUTE + "0;\n" //
-                + "attribute vec2 " + CUShader.GRADCOORD_ATTRIBUTE + "0;\n" //
-                + "uniform mat4 u_projTrans;\n" //
-                + "varying vec4 v_color;\n" //
-                + "varying vec2 v_texCoords;\n" //
-                + "varying vec2 v_gradCoords;\n" //
-                + "varying vec2 v_outPosition;\n" //
-                + "\n" //
-                + "void main()\n" //
-                + "{\n" //
-                + "   v_color = " + ShaderProgram.COLOR_ATTRIBUTE + ";\n" //
-                + "   v_color.a = v_color.a * (255.0/254.0);\n" //
-                + "   v_texCoords = " + ShaderProgram.TEXCOORD_ATTRIBUTE + "0;\n" //
-                + "   v_gradCoords = " + CUShader.GRADCOORD_ATTRIBUTE + "0;\n" //
-                + "   gl_Position =  u_projTrans * " + ShaderProgram.POSITION_ATTRIBUTE + ";\n" //
-                + "   v_outPosition = " +  ShaderProgram.POSITION_ATTRIBUTE + ".xy;\n" //
-                + "}\n";
-        String fragmentShader = "#ifdef GL_ES\n" //
-                + "#define LOWP lowp\n" //
-                + "precision mediump float;\n" //
-                + "#else\n" //
-                + "#define LOWP \n" //
-                + "#endif\n" //
-                + "varying vec2 v_outPosition;\n" //
-                + "varying LOWP vec4 v_color;\n" //
-                + "varying vec2 v_texCoords;\n" //
-                + "varying vec2 v_gradCoords;\n" //
-                + "uniform sampler2D u_texture;\n" //
-                + "uniform int uType;\n" //
-                + "uniform vec2 uBlur;\n" //
-                + "layout (std140) uniform uContext\n" //
-                + "{\n" //
-                + "	mat3 scMatrix;\n" //
-                + " vec2 scExtent;\n" //
-                + " vec2 scScale;\n" //
-                + "// GRADIENT UNIFORM\n" +
-                "// The gradient matrix\n" +
-                " mat3 gdMatrix;\n" +
-                "// The gradient inner color\n" +
-                " vec4 gdInner;\n" +
-                "// The gradient outer color\n" +
-                " vec4 gdOuter;\n" +
-                "// The gradient extent\n" +
-                " vec2 gdExtent;\n" +
-                "// The gradient radius\n" +
-                " float gdRadius;\n" +
-                "// The gradient feather\n" +
-                " float gdFeathr;"
-                + "};\n" //
-                + "\n" //
-                + "float scissormask(vec2 pt) {\n" //
-                + "	 vec2 sc = (abs((scMatrix * vec3(pt,1.0)).xy) - scExtent);\n" //
-                + "  sc = vec2(0.5,0.5) - sc * scScale;\n" //
-                + "  return clamp(sc.x,0.0,1.0) * clamp(sc.y,0.0,1.0);\n" //
-                + "}\n" //
-                + "\n" //
-                + " float boxgradient(vec2 pt, vec2 ext, float radius, float feather) {\n" //
-                +	"    vec2 ext2 = ext - vec2(radius,radius);\n" //
-                +	"    vec2 dst = abs(pt) - ext2;\n" //
-                +	"    float m = min(max(dst.x,dst.y),0.0) + length(max(dst,0.0)) - radius;\n" //
-                +	"    return clamp((m + feather*0.5) / feather, 0.0, 1.0);\n" //
-                +	"}" //
-                + "\n" //
-                + "void main()\n"//
-                + "{\n" //
-                + "  vec4 result =  v_color * texture2D(u_texture, v_texCoords);\n" //
-                + "  float fType = float(uType);\n" //
-                + "  if (mod(fType, 4.0) >= 2.0) {\n" //
-                + "    vec2 pt = (gdMatrix * vec3(v_gradCoords,1.0)).xy;\n" //
-                + "    float d = boxgradient(pt,gdExtent,gdRadius,gdFeathr);\n" //
-                + "    result = mix(gdInner,gdOuter,d)*texture2D(u_texture, v_texCoords);"
-                + "  } \n" //
-                + "  if (mod(fType, 8.0) >= 4.0) {\n" //
-                + "    // Apply scissor mask\n" //
-                + "    result.w *= scissormask(v_texCoords);\n" //
-                + "  }\n" //
-                + "  gl_FragColor = result; \n" //
-                + "}";
-
-        CUShader shader = new CUShader(vertexShader, fragmentShader);
-        if (!shader.isCompiled()) throw new IllegalArgumentException("Error compiling shader: " + shader.getLog());
-        return shader;
-    }
-
+    /**
+     * Deletes the vertex buffers and resets all attributes.
+     *
+     * You must reinitialize the sprite batch to use it.
+     */
     @Override
     public void dispose () {
         if (ownsShader && shader != null) shader.dispose();
@@ -376,6 +196,10 @@ public class CUSpriteBatch implements Batch {
             unifbuff = null;
         }
 
+        if (history != null) {
+            history.clear();
+            history = null;
+        }
         gradient = null;
         scissor = null;
 
@@ -411,6 +235,13 @@ public class CUSpriteBatch implements Batch {
         return colorPacked;
     }
 
+    /**
+     * Sets the shader for this sprite batch
+     *
+     * This value may NOT be changed during a drawing pass.
+     *
+     * @param shader The active shader for this sprite batch
+     */
     public void setShader(CUShader shader) {
         if (drawing) {
             throw new IllegalStateException("Attempt to reassign shader while drawing is active");
@@ -420,7 +251,7 @@ public class CUSpriteBatch implements Batch {
         vertbuff.detach();
         this.shader = shader;
         vertbuff.attach(this.shader);
-        ((CUShader)this.shader).setUniformBlock("uContext", unifbuff);
+        ((CUShader)this.shader).setUniformBlock(SpriteShader.CONTEXT_UNIFORM, unifbuff);
     }
 
     /**
@@ -443,6 +274,7 @@ public class CUSpriteBatch implements Batch {
         setShader(gl30Shader);
     }
 
+    @Override
     public boolean isBlendingEnabled() {
         return context.blending;
     }
@@ -728,14 +560,14 @@ public class CUSpriteBatch implements Batch {
      * This method acquires a copy of the gradient. Changes to the original
      * gradient after calling this method have no effect.
      *
-     * @param CUGradient   The active gradient for this sprite batch
+     * @param gradient   The active gradient for this sprite batch
      */
-    public void setGradient(CUGradient CUGradient) {
-        if (CUGradient == this.gradient) {
+    public void setGradient(CUGradient gradient) {
+        if (gradient == this.gradient) {
             return;
         }
         if (inflight) record();
-        if (CUGradient == null) {
+        if (gradient == null) {
             // Active gradient is not null
             context.dirty = context.dirty | DIRTY_UNIBLOCK | DIRTY_DRAWTYPE;
             context.type = context.type & ~TYPE_GRADIENT;
@@ -743,7 +575,7 @@ public class CUSpriteBatch implements Batch {
         } else {
             context.dirty = context.dirty | DIRTY_UNIBLOCK | DIRTY_DRAWTYPE;
             context.type = context.type | TYPE_GRADIENT;
-            this.gradient = new CUGradient(CUGradient);
+            this.gradient = new CUGradient(gradient);
         }
     }
 
@@ -781,16 +613,16 @@ public class CUSpriteBatch implements Batch {
      * This method acquires a copy of the scissor. Changes to the original
      * scissor mask after calling this method have no effect.
      *
-     * @param CUScissor   The active scissor mask for this sprite batch
+     * @param scissor   The active scissor mask for this sprite batch
      */
-    public void setScissor(CUScissor CUScissor) {
-        if (CUScissor == this.scissor) {
+    public void setScissor(CUScissor scissor) {
+        if (scissor == this.scissor) {
             return;
         }
 
         if (inflight) { record(); }
 
-        if (CUScissor == null) {
+        if (scissor == null) {
             // Active gradient is not null
             context.dirty = context.dirty | DIRTY_UNIBLOCK | DIRTY_DRAWTYPE;
             context.type = context.type & ~TYPE_SCISSOR;
@@ -798,7 +630,7 @@ public class CUSpriteBatch implements Batch {
         } else {
             context.dirty = context.dirty | DIRTY_UNIBLOCK | DIRTY_DRAWTYPE;
             context.type = context.type | TYPE_SCISSOR;
-            this.scissor = new CUScissor(CUScissor);
+            this.scissor = new CUScissor(scissor);
         }
     }
 
@@ -857,6 +689,7 @@ public class CUSpriteBatch implements Batch {
         return shader;
     }
 
+    @Override
     public boolean isDrawing () {
         return drawing;
     }
@@ -870,13 +703,13 @@ public class CUSpriteBatch implements Batch {
      * effects, as well as a discussion of how the two halves of the
      * stencil buffer work.
      *
-     * This value should be set to {@link CUStencilEffect.StencilEffect#NATIVE} (the
+     * This value should be set to {@link CUStencilEffect.Effect#NATIVE} (the
      * default) if you wish to directly manipulate the OpenGL stencil.
      * This is sometimes necessary for more complex effects.
      *
      * @param effect    The current stencil effect
      */
-    public void setStencilEffect(CUStencilEffect.StencilEffect effect) {
+    public void setStencilEffect(CUStencilEffect.Effect effect) {
         if (context.stencil != effect) {
             if (inflight) { record(); }
             context.stencil = effect;
@@ -893,13 +726,13 @@ public class CUSpriteBatch implements Batch {
      * effects, as well as a discussion of how the two halves of the
      * stencil buffer work.
      *
-     * This value should be set to {@link CUStencilEffect.StencilEffect#NATIVE} (the
+     * This value should be set to {@link CUStencilEffect.Effect#NATIVE} (the
      * default) if you wish to directly manipulate the OpenGL stencil.
      * This is sometimes necessary for more complex effects.
      *
      * @return the current stencil effect
      */
-    public CUStencilEffect.StencilEffect getStencilEffect() {
+    public CUStencilEffect.Effect getStencilEffect() {
         return context.stencil;
     }
 
@@ -963,7 +796,7 @@ public class CUSpriteBatch implements Batch {
         if (idx > 0) flush();
         drawing = false;
 
-        CUStencilEffect.applyEffect(CUStencilEffect.StencilEffect.NONE);
+        CUStencilEffect.applyEffect(CUStencilEffect.Effect.NONE);
 
         GL20 gl = Gdx.gl;
         gl.glDepthMask(true);
@@ -1014,7 +847,7 @@ public class CUSpriteBatch implements Batch {
                 }
             }
             if ((next.dirty & DIRTY_DRAWTYPE) == DIRTY_DRAWTYPE) {
-                shader.setUniformi("uType", next.type);
+                shader.setUniformi("u_drawtype", next.type);
             }
             if ((next.dirty & DIRTY_MATRIX) == DIRTY_MATRIX){
                 projectionMatrix.set(next.perspective).mul(next.transform);
@@ -1050,7 +883,7 @@ public class CUSpriteBatch implements Batch {
 //                System.out.println();
 //            }
 //            System.out.println();
-            vertbuff.draw(context.command, amt, next.first);
+            vertbuff.draw(next.command, amt, next.first);
             renderCalls++;
             totalRenderCalls++;
         }
@@ -1069,6 +902,36 @@ public class CUSpriteBatch implements Batch {
     //endregion
 
     //region Solid Shapes
+
+    /**
+     * Draws the given rectangle (described by the parameters) filled with the
+     * current color and texture, with the transformations on it.
+     *
+     * The texture will fill the entire rectangle with texture coordinate
+     * (0,1) at the bottom left corner identified by rect,origin. Alternatively, you can use a {@link Poly2}
+     * for more fine-tuned control.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param x         The x-coordinate in screen space
+     * @param y         The y-coordinate in screen space
+     * @param originX   The rotation origin x-coord
+     * @param originY   The rotation origin y-coord
+     * @param width     The width of the rectangle to draw
+     * @param height    The height of the rectangle to draw
+     * @param scaleX    The scale factor in the x-direction
+     * @param scaleY    The scale factor in the y-direction
+     * @param rotation  The amount to rotate in degrees
+     * @param srcX      The x-coordinate in texel space
+     * @param srcY      The y-coordinate in texel space
+     * @param srcWidth  The source width in texels
+     * @param srcHeight The source height in texels
+     * @param tWidth    The texture width
+     * @param tHeight   The texture height
+     * @param flipX     Whether to flip the sprite horizontally
+     * @param flipY     Whether to flip the sprite vertically
+     */
     public void fill(float x, float y, float originX, float originY, float width, float height, float scaleX, float scaleY,
                      float rotation, int srcX, int srcY, int srcWidth, int srcHeight, float tWidth, float tHeight, boolean flipX, boolean flipY) {
         transformCache.idt();
@@ -1082,6 +945,7 @@ public class CUSpriteBatch implements Batch {
         prepare(srcX, srcY, srcWidth, srcHeight, tWidth, tHeight, flipX, flipY);
     }
 
+    /** Draws the given rectangle filled with the current color and texture. */
     public void fill(float x, float y, float width, float height, int srcX, int srcY, int srcWidth, int srcHeight,
                      float tWidth, float tHeight, boolean flipX, boolean flipY) {
         transformCache.idt();
@@ -1091,6 +955,9 @@ public class CUSpriteBatch implements Batch {
         makeRect(0, 0, width, height, context.command == GL30.GL_TRIANGLES);
         prepare(srcX, srcY, srcWidth, srcHeight, tWidth, tHeight, flipX, flipY);
     }
+
+    /** Draws the given rectangle filled with the current color and texture. The portion of the
+     * {@link Texture} given by u, v and u2, v2 are used. */
     public void fill(float x, float y, float width, float height, float u, float v, float u2, float v2) {
         transformCache.idt();
 
@@ -1099,6 +966,7 @@ public class CUSpriteBatch implements Batch {
         prepare(width, height, u, v, u2, v2);
     }
 
+    /** Draws the given rectangle filled with the current color and texture. */
     public void fill(float x, float y, float width, float height) {
         transformCache.idt();
 
@@ -1107,6 +975,8 @@ public class CUSpriteBatch implements Batch {
         prepare(x, y, width, height);
     }
 
+    /** Draws the given rectangle filled with the current color and texture, with transforms described.
+     * The portion of the {@link Texture} given by u, v and u2, v2 are used. */
     public void fill(float x, float y, float originX, float originY, float width, float height, float scaleX,
                      float scaleY, float rotation, float u, float v, float u2, float v2) {
         transformCache.idt();
@@ -1120,6 +990,8 @@ public class CUSpriteBatch implements Batch {
         prepare(width, height, u, v, u2, v2);
     }
 
+    /** Draws the given rectangle filled with the current color and texture, with transforms described.
+     * The portion of the {@link Texture} given by u, v and u2, v2 are used. */
     public void fill(float width, float height, Affine2 transform, float u, float v, float u2, float v2) {
         transformCache.set(transform);
 
@@ -1128,6 +1000,33 @@ public class CUSpriteBatch implements Batch {
         prepare(width, height, u, v, u2, v2);
     }
 
+    /**
+     * Draws the given polygon filled with the current color and texture.
+     *
+     * The polygon tesselation will be determined by the indices in poly. If
+     * the polygon has not been triangulated (by one of the triangulation
+     * factories {@link EarclipTriangulator} or {@link DelaunayTriangulator},
+     * it may not draw properly.
+     *
+     * The vertex coordinates will be determined by polygon vertex position.
+     * A horizontal position x has texture coordinate x/texture.width. A
+     * vertical coordinate has texture coordinate 1-y/texture.height. As a
+     * result, a rectangular polygon that has the same dimensions as the
+     * texture is the same as simply drawing the texture.
+     *
+     * One way to think of the polygon is as a "cookie cutter".  Treat the
+     * polygon coordinates as pixel coordinates in the texture file, and use
+     * that to determine how the texture fills the polygon. This may make the
+     * polygon larger than you like in order to get the appropriate texturing.
+     * You should use one of the transform methods to fix this.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param poly The polygon to draw
+     * @param x    The x offset
+     * @param y    The y offset
+     */
     public void fill(Poly2 poly, float x, float y) {
         transformCache.idt();
         transformCache.preTranslate(x, y);
@@ -1136,7 +1035,7 @@ public class CUSpriteBatch implements Batch {
         prepare(poly);
     }
 
-
+    /** Draw the given polygon with the texture, with transforms described. */
     public void fill (Poly2 poly, float x, float y, float originX, float originY, float scaleX,
                       float scaleY, float rotation) {
         transformCache.idt();
@@ -1149,12 +1048,253 @@ public class CUSpriteBatch implements Batch {
         prepare(poly);
     }
 
-
+    /** Draw the given polygon with the texture, with the given transform. */
     public void fill (Poly2 poly, float x, float y, Affine2 transform) {
         transformCache.set(transform);
         transformCache.preTranslate(x, y);
 
         setCommand(GL30.GL_TRIANGLES);
+        prepare(poly);
+    }
+    //endregion
+
+    //region Outlines
+    /**
+     * Outlines the given rectangle with the current color and texture.
+     *
+     * The drawing will be a wireframe of a rectangle.  The wireframe will
+     * be textured with Texture coordinate (0,1) at the bottom left corner
+     * identified by rect,origin. The remaining edges will correspond to the
+     * edges of the texture. To draw only part of a texture, use a subtexture
+     * to outline the edges with [minS,maxS]x[min,maxT]. Alternatively, you
+     * can use a {@link Poly2} for more fine-tuned control.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param x      x-coordinate
+     * @param y      y-coordinate
+     * @param width  width of outline box
+     * @param height height of outline box
+     */
+    public void outline(float x, float y, float width, float height) {
+        transformCache.idt();
+
+        setCommand(GL30.GL_LINES);
+        makeRect(x, y, width, height, context.command == GL30.GL_TRIANGLES);
+        prepare(x, y, width, height);
+    }
+
+    /**
+     * Outlines the given rectangle with the current color and texture.
+     *
+     * The rectangle will be scaled first, then rotated, and finally offset
+     * by the given position. Rotation is measured in radians and is counter
+     * clockwise from the x-axis.  Rotation will be about the provided origin,
+     * which is specified relative to the origin of the rectangle (not world
+     * coordinates).  So to spin about the center, the origin should be width/2,
+     * height/2 of the rectangle.
+     *
+     * The drawing will be a wireframe of a rectangle.  The wireframe will
+     * be textured with Texture coordinate (0,1) at the bottom left corner
+     * identified by rect,origin. The remaining edges will correspond to the
+     * edges of the texture. To draw only part of a texture, use a subtexture
+     * to outline the edges with [minS,maxS]x[min,maxT]. Alternatively, you can
+     * use a {@link Poly2} for more fine-tuned control.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param x         The x coordinate to draw at
+     * @param y         The y coordinate to draw at
+     * @param width     The width of the rectangle
+     * @param height    The height of the rectangle
+     * @param originX   The x coordinate of the rotation offset
+     * @param originY   The y coordinate of the rotation offset
+     * @param scaleX    The amount to scale the rectangle in x direction
+     * @param scaleY    The amount to scale the rectangle in y direction
+     * @param rotation  The amount to rotate the rectangle
+     */
+    public void outline(float x, float y, float width, float height, float originX, float originY, float scaleX,
+                              float scaleY, float rotation) {
+        transformCache.idt();
+        transformCache.preTranslate(-originX, -originY);
+        transformCache.preScale(scaleX, scaleY);
+        transformCache.preRotate(rotation);
+        transformCache.preTranslate(x + originX, y + originY);
+
+        setCommand(GL30.GL_LINES);
+        makeRect(0, 0, width, height, context.command == GL30.GL_TRIANGLES);
+        prepare(x, y, width, height);
+    }
+
+    /** Outlines the given rectangle with the given transforms. The portion of the
+     * {@link Texture} given by u, v and u2, v2 are used. */
+    public void outline(float width, float height, float originX, float originY, Affine2 transform, float u, float v,
+                        float u2, float v2) {
+        transformCache.set(transform);
+        transformCache.preTranslate(originX, originY);
+
+        setCommand(GL30.GL_LINES);
+        makeRect(0, 0, width, height, context.command == GL30.GL_TRIANGLES);
+        prepare(width, height, u, v, u2, v2);
+    }
+
+    /**
+     * Outlines the given path with the current color and texture. The poly
+     * here represents a Path2, using the appropriate converted vertices and
+     * indices. Look at {@link Path2#getIndices()} for information on getting
+     * indices.
+     *
+     * The drawing will be a wireframe of a path, but the lines are textured.
+     * The vertex coordinates will be determined by path vertex position.
+     * A horizontal position x has texture coordinate x/texture.width. A
+     * vertical coordinate has texture coordinate 1-y/texture.height. As a
+     * result, a rectangular polygon that has the same dimensions as the
+     * texture is the same as simply outlining the rectangle.
+     *
+     * One way to think of the path is as a "cookie cutter".  Treat the
+     * path coordinates as pixel coordinates in the texture file, and use
+     * that to determine how the texture fills the path. This may make the
+     * path larger than you like in order to get the appropriate texturing.
+     * You should use one of the transform methods to fix this.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param poly      The path to outline
+     */
+    public void outline(Poly2 poly) {
+        transformCache.idt();
+
+        setCommand(GL30.GL_LINES);
+        prepare(poly);
+    }
+
+    /**
+     * Outlines the given path with the current color and texture. The poly
+     * here represents a Path2, using the appropriate converted vertices and
+     * indices. Look at {@link Path2#getIndices()} for information on getting
+     * indices from a Path2.
+     *
+     * The path will be offset by the given position.
+     *
+     * The drawing will be a wireframe of a path, but the lines are textured.
+     * The vertex coordinates will be determined by path vertex position.
+     * A horizontal position x has texture coordinate x/texture.width. A
+     * vertical coordinate has texture coordinate 1-y/texture.height. As a
+     * result, a rectangular polygon that has the same dimensions as the
+     * texture is the same as simply outlining the rectangle.
+     *
+     * One way to think of the path is as a "cookie cutter".  Treat the
+     * path coordinates as pixel coordinates in the texture file, and use
+     * that to determine how the texture fills the path. This may make the
+     * path larger than you like in order to get the appropriate texturing.
+     * You should use one of the transform methods to fix this.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param poly  The path to outline
+     * @param x     The x offset
+     * @param y     The y offset
+     */
+    public void outline(Poly2 poly, float x, float y) {
+        transformCache.idt();
+        transformCache.preTranslate(x, y);
+
+        setCommand(GL30.GL_LINES);
+        prepare(poly);
+    }
+
+    /**
+     * Outlines the given path with the current color and texture. The poly
+     * here represents a Path2, using the appropriate converted vertices and
+     * indices. Look at {@link Path2#getIndices()} for information on getting
+     * indices from a Path2.
+     *
+     * The path will be scaled first, then rotated, and finally offset
+     * by the given position. Rotation is measured in radians and is counter
+     * clockwise from the x-axis.  Rotation will be about the provided origin,
+     * which is specified relative to the origin of the path (not world
+     * coordinates). Hence this origin is essentially the pixel coordinate
+     * of the texture (see below) to assign as the rotational center.
+     *
+     * The drawing will be a wireframe of a path, but the lines are textured.
+     * The vertex coordinates will be determined by path vertex position.
+     * A horizontal position x has texture coordinate x/texture.width. A
+     * vertical coordinate has texture coordinate 1-y/texture.height. As a
+     * result, a rectangular polygon that has the same dimensions as the
+     * texture is the same as simply outlining the rectangle.
+     *
+     * One way to think of the path is as a "cookie cutter".  Treat the
+     * path coordinates as pixel coordinates in the texture file, and use
+     * that to determine how the texture fills the path. This may make the
+     * path larger than you like in order to get the appropriate texturing.
+     * You should use one of the transform methods to fix this.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param poly      The path to outline
+     * @param x         The x offset
+     * @param y         The y offset
+     * @param originX   The x coordinate of the rotation offset
+     * @param originY   The y coordinate of the rotation offset
+     * @param scaleX    The amount to scale the rectangle in x direction
+     * @param scaleY    The amount to scale the rectangle in y direction
+     * @param rotation  The amount to rotate the rectangle
+     */
+    public void outline (Poly2 poly, float x, float y, float originX, float originY, float scaleX,
+                      float scaleY, float rotation) {
+        transformCache.idt();
+        transformCache.preTranslate(-originX, -originY);
+        transformCache.preScale(scaleX, scaleY);
+        transformCache.preRotate(rotation);
+        transformCache.preTranslate(x + originX, y + originY);
+
+        setCommand(GL30.GL_LINES);
+        prepare(poly);
+    }
+
+    /**
+     * Outlines the given path with the current color and texture.The poly
+     * here represents a Path2, using the appropriate converted vertices and
+     * indices. Look at {@link Path2#getIndices()} for information on getting
+     * indices from a Path2.
+     *
+     * The path will transformed by the given matrix. The transform will
+     * be applied assuming the given origin, which is specified relative
+     * to the origin of the path (not world coordinates). Hence this origin
+     * is essentially the pixel coordinate of the texture (see below) to
+     * assign as the origin of this transform.
+     *
+     * The drawing will be a wireframe of a path, but the lines are textured.
+     * The vertex coordinates will be determined by path vertex position.
+     * A horizontal position x has texture coordinate x/texture.width. A
+     * vertical coordinate has texture coordinate 1-y/texture.height. As a
+     * result, a rectangular polygon that has the same dimensions as the
+     * texture is the same as simply outlining the rectangle.
+     *
+     * One way to think of the path is as a "cookie cutter".  Treat the
+     * path coordinates as pixel coordinates in the texture file, and use
+     * that to determine how the texture fills the path. This may make the
+     * path larger than you like in order to get the appropriate texturing.
+     * You should use one of the transform methods to fix this.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param poly          The path to outline
+     * @param x             The x offset
+     * @param y             The y offset
+     * @param transform     The transform to be applied
+     */
+    public void outline (Poly2 poly, float x, float y, Affine2 transform) {
+        transformCache.set(transform);
+        transformCache.preTranslate(x, y);
+
+        setCommand(GL30.GL_LINES);
         prepare(poly);
     }
     //endregion
@@ -1341,12 +1481,34 @@ public class CUSpriteBatch implements Batch {
         fill(poly, x, y);
     }
 
+    /**
+     * Draws the texture (without tint) at the given position
+     *
+     * This is a convenience method that calls the appropriate fill method.
+     * It sets both the texture and color (removing the previous active values).
+     * It then draws a rectangle of the size of the texture, with bottom left
+     * corner at the given position.
+     *
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param texture   The texture to draw
+     * @param poly      The polygon to draw
+     * @param x         The x offset
+     * @param y         The y offset
+     * @param originX   The x-coordinate of the scaling and rotation origin relative to the screen space coordinates
+     * @param originY   The y-coordinate of the scaling and rotation origin relative to the screen space coordinates
+     * @param scaleX    The scale factor in the x-direction
+     * @param scaleY    The scale factor in the y-direction
+     * @param rotation  The amount to rotate the sprite in degrees
+     */
     public void draw (Texture texture, Poly2 poly, float x, float y, float originX, float originY, float scaleX,
                       float scaleY, float rotation) {
         setTexture(texture);
         fill(poly, x, y, originX, originY, scaleX, scaleY, rotation);
     }
 
+    /** Draw the given polygon of the texture with the transform. */
     public void draw (Texture texture, Poly2 poly, float x, float y, Affine2 transform) {
         setTexture(texture);
         fill(poly, x, y, transform);
@@ -1455,14 +1617,25 @@ public class CUSpriteBatch implements Batch {
      */
     private void blurTexture(Texture texture, int step)  {
         if (texture == null) {
-            shader.setUniformf("uBlur", 0, 0);
+            shader.setUniformf("u_blurstep", 0, 0);
             return;
         }
         float width  = step/(float)texture.getWidth();
         float height = step/(float)texture.getHeight();
-        shader.setUniformf("uBlur",width,height);
+        shader.setUniformf("u_blurstep",width,height);
     }
 
+    /**
+     * This method adds the given rectangle (from the parameters) to the vertex buffer,
+     * but does not draw it yet.  You must call {@link #flush} or {@link #end} to draw the
+     * rectangle. This method will automatically flush if the maximum number
+     * of vertices is reached.
+     *
+     * @param x         The x-coordinate in screen space
+     * @param y         The y-coordinate in screen space
+     * @param width     The width in pixels
+     * @param height    The height in pixels
+     */
     public void prepare(float x, float y, float width, float height) {
         if (idx + (numsInVertex * 4) >= vertices.length || indxSize+8 >= indxMax)
             flush();
@@ -1506,6 +1679,13 @@ public class CUSpriteBatch implements Batch {
         inflight = true;
     }
 
+    /**
+     * This method adds the given rectangle (from the parameters) to the vertex buffer,
+     * but does not draw it yet.  You must call {@link #flush} or {@link #end} to draw the
+     * rectangle. This method will automatically flush if the maximum number
+     * of vertices is reached. The portion of the {@link Texture} given by srcX, srcY and
+     * srcWidth, srcHeight is used.
+     */
     public void prepare(int srcX, int srcY, int srcWidth, int srcHeight, float tWidth, float tHeight, boolean flipX, boolean flipY) {
         if (idx + (numsInVertex * 4) >= vertices.length || indxSize+8 >= indxMax)
             flush();
@@ -1588,6 +1768,12 @@ public class CUSpriteBatch implements Batch {
         inflight = true;
     }
 
+    /**
+     * This method adds the given rectangle (from the parameters) to the vertex buffer,
+     * but does not draw it yet.  You must call {@link #flush} or {@link #end} to draw the
+     * rectangle. This method will automatically flush if the maximum number
+     * of vertices is reached. The portion of the {@link Texture} given by u, v and u2, v2 are used.
+     */
     public void prepare(float width, float height, float u, float v, float u2, float v2) {
         if (idx + (numsInVertex * 4) >= vertices.length || indxSize+8 >= indxMax)
             flush();
@@ -1653,6 +1839,7 @@ public class CUSpriteBatch implements Batch {
         inflight = true;
     }
 
+    /** This method adds the polygon to the vertex buffer, but does not draw it yet. */
     public void prepare (Poly2 poly) {
         assert(context.command == GL30.GL_TRIANGLES ?
                 poly.indices.length % 3 == 0 :
@@ -1660,7 +1847,7 @@ public class CUSpriteBatch implements Batch {
                 "Polynomial has the wrong number of indices: " + poly.indices.length;
 
         if (poly.vertices.length >= vertMax || poly.indices.length  >= indxMax) {
-//            chunkify(poly);
+            chunkify(poly);
             return;
         } else if (idx + (numsInVertex * poly.vertices.length) >= vertices.length ||
                 indxSize+poly.indices.length  > indxMax) {
@@ -1686,7 +1873,7 @@ public class CUSpriteBatch implements Batch {
             float xm = transformCache.m00 * x1 + transformCache.m01 * y1 + transformCache.m02;
             float ym = transformCache.m10 * x1 + transformCache.m11 * y1 + transformCache.m12;
             x1 /= twidth;
-            y1 = (1-y1) / theight;
+            y1 = 1 - (y1/theight);
             vertices[idx] = xm;
             vertices[idx + 1] = ym;
             vertices[idx + 2] = clr;
@@ -1713,6 +1900,79 @@ public class CUSpriteBatch implements Batch {
         this.idx += numsInVertex * ii;
         vertSize += ii;
         indxSize += jj;
+        inflight = true;
+    }
+
+    /**
+     * Returns the number of vertices added to the drawing buffer.
+     *
+     * This method is an alternate version of {@link #prepare} for the same
+     * arguments.  It runs slower (e.g. the compiler cannot easily optimize
+     * the loops) but it is guaranteed to work on any size polygon.  This
+     * is important for avoiding memory corruption.
+     *
+     * All vertices will be uniformly transformed by the transform matrix.
+     * If depth testing is on, all vertices will use the current sprite
+     * batch depth.
+     *
+     * @param poly The polygone to add to the buffer
+     */
+    public void chunkify(Poly2 poly) {
+        int chunksize = context.command == GL30.GL_TRIANGLES ? 3 : (context.command == GL30.GL_LINES ? 2 : 1);
+
+        Texture texture = context.texture;
+        float twidth;
+        float theight;
+
+        if (texture != null) {
+            twidth = texture.getWidth();
+            theight = texture.getHeight();
+        } else {
+            twidth  = poly.getBounds().width;
+            theight = poly.getBounds().height;
+        }
+
+        float clr = this.colorPacked;
+        for(int ii = 0;  ii < poly.indices.length; ii += chunksize) {
+            if (indxSize+chunksize > indxMax || vertSize+chunksize > vertMax) {
+                flush();
+                offsets.clear();
+            }
+
+            for(int jj = 0; jj < chunksize; jj++) {
+                int search = offsets.get(poly.indices[ii+jj], -1);
+                if (search != -1) {
+                    indxData[indxSize] = (short)search;
+                } else {
+                    int id = poly.indices[ii+jj];
+                    float x1 = poly.vertices[2*id  ];
+                    float y1 = poly.vertices[2*id+1];
+                    float xm = transformCache.m00 * x1 + transformCache.m01 * y1 + transformCache.m02;
+                    float ym = transformCache.m10 * x1 + transformCache.m11 * y1 + transformCache.m12;
+                    x1 /= twidth;
+                    y1 = 1 - (y1/theight);
+                    vertices[idx] = xm;
+                    vertices[idx + 1] = ym;
+                    vertices[idx + 2] = clr;
+                    vertices[idx + 3] = x1;
+                    vertices[idx + 4] = y1;
+                    if (numsInVertex == 7) {
+                        vertices[idx + 5] = x1;
+                        vertices[idx + 6] = y1;
+                    }
+
+                    indxData[indxSize] = (short)vertSize;
+
+                    offsets.put(poly.indices[ii+jj], vertSize);
+                    vertSize++;
+                    idx += numsInVertex;
+                }
+                indxSize++;
+            }
+        }
+
+        setUniformBlock();
+        offsets.clear();
         inflight = true;
     }
     //endregion
@@ -1749,7 +2009,7 @@ public class CUSpriteBatch implements Batch {
         /** The stored alpha destination factor */
         public int dstFactorAlpha;
         /** The current stencil effect */
-        public CUStencilEffect.StencilEffect stencil;
+        public CUStencilEffect.Effect stencil;
         /** The stencil buffer to clear */
         public int cleared;
         /** The stored perspective matrix */
@@ -1821,7 +2081,7 @@ public class CUSpriteBatch implements Batch {
             dstFactorAlpha = 0;
             perspective = null;
             transform = null;
-            stencil = CUStencilEffect.StencilEffect.NATIVE;
+            stencil = CUStencilEffect.Effect.NATIVE;
             cleared = CUStencilEffect.STENCIL_NONE;
             texture = null;
             blockptr = -1;
@@ -1846,7 +2106,7 @@ public class CUSpriteBatch implements Batch {
             dstFactorAlpha = -1;
             perspective.setToOrtho2D(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
             transform.idt();
-            stencil  = CUStencilEffect.StencilEffect.NATIVE;
+            stencil  = CUStencilEffect.Effect.NATIVE;
             cleared  = CUStencilEffect.STENCIL_NONE;
             texture = null;
             blockptr = -1;
