@@ -812,15 +812,7 @@ public class CUSpriteBatch implements Batch {
         }
 
         vertbuff.loadVertexData(vertices, idx);
-//        for (int i = 0; i < idx; i++) {
-//            System.out.print(vertices[i]+ " ");
-//        }
-//        System.out.println();
         vertbuff.loadIndexData(indxData, indxSize);
-//        for (int i = 0; i < indxSize; i++) {
-//            System.out.print(indxData[i]+ " ");
-//        }
-//        System.out.println();
 
         unifbuff.activate();
         unifbuff.flush();
@@ -873,16 +865,6 @@ public class CUSpriteBatch implements Batch {
             }
 
             int amt = next.last-next.first;
-//            int ct = (amt / (numsInVertex * 4)) * 6; // AKA draw 6 indices for each sprite
-//            int beg = (next.first / (numsInVertex * 4)) * 6; // AKA the first index for the first sprite
-//            for (int i = next.first; i < amt; i++) {
-//                System.out.println(indxData[i]);
-//                for (int j = 0; j < numsInVertex; j++) {
-//                    System.out.print(vertices[indxData[i]*numsInVertex + j] + " ");
-//                }
-//                System.out.println();
-//            }
-//            System.out.println();
             vertbuff.draw(next.command, amt, next.first);
             renderCalls++;
             totalRenderCalls++;
